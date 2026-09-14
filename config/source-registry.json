@@ -1,0 +1,334 @@
+{
+  "schema_version": 1,
+  "review_date": "2026-09-14",
+  "stage": "preparation_only",
+  "pipeline_enabled": false,
+  "news_test_run_executed": false,
+  "description": "来源入口登记；网页可读不等于自动采集可用。未完成具体端点、使用方式、日期及正文提取检查的来源不得自动启用。",
+  "sources": [
+    {
+      "id": "vancouver_news",
+      "name": "City of Vancouver — News",
+      "topics": [
+        "living",
+        "finance"
+      ],
+      "geography": "vancouver_city",
+      "entry_url": "https://vancouver.ca/news-calendar/news.aspx",
+      "feed_url": null,
+      "role": "news",
+      "entry_check": "readable",
+      "automation_check": "http_403",
+      "usage_review": "pending",
+      "enabled": false,
+      "notes": "网页工具读取成功；本地 Python 普通请求 HTTP 403。具体 RSS 地址与合规获取方式仍待验证。"
+    },
+    {
+      "id": "vancouver_grants",
+      "name": "City of Vancouver — Grants and awards",
+      "topics": [
+        "living",
+        "finance"
+      ],
+      "geography": "vancouver_city",
+      "entry_url": "https://vancouver.ca/people-programs/grants-and-awards.aspx",
+      "feed_url": null,
+      "role": "benefits_and_grants",
+      "entry_check": "readable",
+      "automation_check": "not_tested",
+      "usage_review": "pending",
+      "enabled": false,
+      "notes": "资格需逐项目核实；目录中的组织资助不能写成普遍居民福利。"
+    },
+    {
+      "id": "vancouver_consultations",
+      "name": "Shape Your City Vancouver",
+      "topics": [
+        "living"
+      ],
+      "geography": "vancouver_city",
+      "entry_url": "https://www.shapeyourcity.ca/",
+      "feed_url": null,
+      "role": "public_consultation",
+      "entry_check": "shell_only",
+      "automation_check": "project_extraction_unverified",
+      "usage_review": "pending",
+      "enabled": false,
+      "notes": "温哥华官网链接的平台已确认；当前网页提取只有外壳，不能宣称项目与截止信息可自动获取。"
+    },
+    {
+      "id": "bc_news",
+      "name": "BC Gov News — Connect",
+      "topics": [
+        "finance",
+        "technology",
+        "living",
+        "immigration"
+      ],
+      "geography": "bc_province",
+      "entry_url": "https://news.gov.bc.ca/connect",
+      "feed_url": null,
+      "role": "news_and_policy",
+      "entry_check": "readable",
+      "automation_check": "local_tls_certificate_error",
+      "usage_review": "pending",
+      "enabled": false,
+      "notes": "页面列出 RSS 入口；本机 Python 证书链验证失败。修复信任链，不关闭 TLS 校验。具体 feed 解析待验证。"
+    },
+    {
+      "id": "bc_consultations",
+      "name": "govTogetherBC",
+      "topics": [
+        "living"
+      ],
+      "geography": "bc_province",
+      "entry_url": "https://engage.gov.bc.ca/govtogetherbc/",
+      "feed_url": null,
+      "role": "public_consultation",
+      "entry_check": "readable",
+      "automation_check": "not_tested",
+      "usage_review": "pending",
+      "enabled": false,
+      "notes": "BC 政府官方订阅页链接；逐项目验证征询阶段、适用范围及截止时间。"
+    },
+    {
+      "id": "richmond_news",
+      "name": "City of Richmond — City News",
+      "topics": [
+        "living",
+        "finance"
+      ],
+      "geography": "richmond_city",
+      "entry_url": "https://www.richmond.ca/city-hall/news.htm",
+      "feed_url": null,
+      "role": "news_and_policy",
+      "entry_check": "readable",
+      "automation_check": "not_tested",
+      "usage_review": "pending",
+      "enabled": false,
+      "notes": "列治文辖区；不自动套用于温哥华市居民。"
+    },
+    {
+      "id": "surrey_news",
+      "name": "City of Surrey — News",
+      "topics": [
+        "living",
+        "finance"
+      ],
+      "geography": "surrey_city",
+      "entry_url": "https://www.surrey.ca/news-events/news",
+      "feed_url": null,
+      "role": "news_and_policy",
+      "entry_check": "readable",
+      "automation_check": "not_tested",
+      "usage_review": "pending",
+      "enabled": false,
+      "notes": "素里辖区；日期提取与正文获取待验证。"
+    },
+    {
+      "id": "translink",
+      "name": "TransLink — Alerts",
+      "topics": [
+        "living"
+      ],
+      "geography": "metro_vancouver",
+      "entry_url": "https://www.translink.ca/alerts",
+      "feed_url": null,
+      "role": "transport",
+      "entry_check": "readable_in_prior_research",
+      "automation_check": "not_tested",
+      "usage_review": "pending",
+      "enabled": false,
+      "notes": "区分大温交通服务范围与市级政策；不把实时短暂故障当成已过期的次日行动建议。"
+    },
+    {
+      "id": "canada_benefits",
+      "name": "Government of Canada — Benefits",
+      "topics": [
+        "finance",
+        "living"
+      ],
+      "geography": "canada_federal",
+      "entry_url": "https://www.canada.ca/en/services/benefits.html",
+      "feed_url": null,
+      "role": "benefits_and_grants",
+      "entry_check": "readable",
+      "automation_check": "not_tested",
+      "usage_review": "pending",
+      "enabled": false,
+      "notes": "目录用于发现政策与资格页面；初次发现旧项目不是昨日发布。"
+    },
+    {
+      "id": "ircc",
+      "name": "IRCC — Newsroom",
+      "topics": [
+        "immigration",
+        "living"
+      ],
+      "geography": "canada_federal",
+      "entry_url": "https://www.canada.ca/en/immigration-refugees-citizenship/news.html",
+      "feed_url": null,
+      "role": "immigration_policy",
+      "entry_check": "readable",
+      "automation_check": "not_tested",
+      "usage_review": "pending",
+      "enabled": false,
+      "notes": "必须连同政策条件及生效日期取证；新闻稿不替代项目完整规则。"
+    },
+    {
+      "id": "bank_of_canada",
+      "name": "Bank of Canada — RSS feeds",
+      "topics": [
+        "finance"
+      ],
+      "geography": "canada_national",
+      "entry_url": "https://www.bankofcanada.ca/rss-feeds/",
+      "feed_url": null,
+      "role": "economic_policy",
+      "entry_check": "readable",
+      "automation_check": "not_tested",
+      "usage_review": "pending",
+      "enabled": false,
+      "notes": "从官方目录选取实际 feed；数据值、公布时间和单位须独立提取。"
+    },
+    {
+      "id": "statistics_canada",
+      "name": "Statistics Canada — Developers",
+      "topics": [
+        "finance",
+        "living"
+      ],
+      "geography": "canada_national",
+      "entry_url": "https://www.statcan.gc.ca/en/developers",
+      "feed_url": null,
+      "role": "statistics",
+      "entry_check": "readable",
+      "automation_check": "not_tested",
+      "usage_review": "pending",
+      "enabled": false,
+      "notes": "开发者入口已确认；具体 The Daily 或数据 API 端点待登记。"
+    },
+    {
+      "id": "federal_reserve",
+      "name": "Federal Reserve — RSS feeds",
+      "topics": [
+        "finance"
+      ],
+      "geography": "united_states",
+      "entry_url": "https://www.federalreserve.gov/feeds/feeds.htm",
+      "feed_url": null,
+      "role": "economic_policy",
+      "entry_check": "readable",
+      "automation_check": "not_tested",
+      "usage_review": "pending",
+      "enabled": false,
+      "notes": "美国政策先解释对加拿大影响；不直接套用加拿大利率或贷款。"
+    },
+    {
+      "id": "bls",
+      "name": "U.S. Bureau of Labor Statistics — RSS feeds",
+      "topics": [
+        "finance",
+        "living"
+      ],
+      "geography": "united_states",
+      "entry_url": "https://www.bls.gov/feed/",
+      "feed_url": null,
+      "role": "statistics",
+      "entry_check": "readable",
+      "automation_check": "not_tested",
+      "usage_review": "pending",
+      "enabled": false,
+      "notes": "具体 feed 解析待验证；保留地区、计量口径与发布时点。"
+    },
+    {
+      "id": "ars_technica",
+      "name": "Ars Technica — RSS feeds",
+      "topics": [
+        "technology"
+      ],
+      "geography": "international",
+      "entry_url": "https://arstechnica.com/rss-feeds/",
+      "feed_url": null,
+      "role": "independent_reporting",
+      "entry_check": "readable",
+      "automation_check": "not_tested",
+      "usage_review": "pending",
+      "enabled": false,
+      "notes": "仅核实订阅目录，未批准正文自动处理或再发布方式。"
+    },
+    {
+      "id": "global_bc",
+      "name": "Global News — BC",
+      "topics": [
+        "finance",
+        "technology",
+        "living",
+        "immigration"
+      ],
+      "geography": "bc_province",
+      "entry_url": "https://globalnews.ca/bc/",
+      "feed_url": null,
+      "role": "independent_reporting",
+      "entry_check": "readable",
+      "automation_check": "not_tested",
+      "usage_review": "pending",
+      "enabled": false,
+      "notes": "媒体候选入口；使用方式及全文证据提取待验证。"
+    },
+    {
+      "id": "cbc_bc",
+      "name": "CBC — British Columbia",
+      "topics": [
+        "finance",
+        "technology",
+        "living",
+        "immigration"
+      ],
+      "geography": "bc_province",
+      "entry_url": "https://www.cbc.ca/news/canada/british-columbia",
+      "feed_url": null,
+      "role": "independent_reporting",
+      "entry_check": "web_tool_fetch_failed",
+      "automation_check": "not_tested",
+      "usage_review": "pending",
+      "enabled": false,
+      "notes": "本次网页工具未能打开；候选媒体，不视为已通过自动采集或使用条件审核。"
+    },
+    {
+      "id": "bbc_world",
+      "name": "BBC — World",
+      "topics": [
+        "finance",
+        "technology",
+        "living",
+        "immigration"
+      ],
+      "geography": "international",
+      "entry_url": "https://www.bbc.com/news/world",
+      "feed_url": null,
+      "role": "independent_reporting",
+      "entry_check": "web_tool_robots_denied",
+      "automation_check": "not_tested",
+      "usage_review": "pending",
+      "enabled": false,
+      "notes": "本次网页工具被该站 robots 规则拒绝。需要允许的来源／端点，不绕过访问限制，不以搜索摘要直接写深度分析。"
+    },
+    {
+      "id": "bc_pnp",
+      "name": "WelcomeBC — BC Provincial Nominee Program",
+      "topics": [
+        "immigration"
+      ],
+      "geography": "bc_province",
+      "entry_url": "https://www.welcomebc.ca/immigrate-to-b-c/bc-provincial-nominee-program",
+      "feed_url": null,
+      "role": "immigration_policy",
+      "entry_check": "web_tool_fetch_failed",
+      "automation_check": "not_tested",
+      "usage_review": "pending",
+      "enabled": false,
+      "notes": "本次网页工具未能打开；官方候选尚未通过。政策是否适用须以带日期的原始公告和项目规则核实。"
+    }
+  ]
+}

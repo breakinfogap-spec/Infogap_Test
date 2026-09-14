@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+secrets/
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+.wrangler/
+generated/
+runs/
+data/
+audio/
+*.mp3
+*.wav
+service-account*.json

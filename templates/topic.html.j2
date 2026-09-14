@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ topic.name }} · {{ site.site_title }}</title>
+  <link rel="stylesheet" href="/base.css">
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <p class="meta"><a href="/">首页</a></p>
+      <h1 class="brand">{{ topic.name }}</h1>
+      <p class="tagline">{{ topic.description }}</p>
+    </div>
+  </header>
+  <main class="wrap article-list">
+    {% if articles %}
+      {% for article in articles %}
+      <article class="article">
+        <p class="meta">{{ article.publication_date }}</p>
+        <h2><a href="/articles/{{ article.slug }}">{{ article.title }}</a></h2>
+        <p>{{ article.summary }}</p>
+      </article>
+      {% endfor %}
+    {% else %}
+      <p class="note">今天这个主题还没有通过事实核查的分析。</p>
+    {% endif %}
+  </main>
+</body>
+</html>

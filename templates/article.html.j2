@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ article.title }} · {{ site.site_title }}</title>
+  <link rel="stylesheet" href="/base.css">
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <p class="meta"><a href="/">首页</a> · <a href="/topics/{{ article.topic }}">{{ topic_name(article.topic, site.topics) }}</a></p>
+      <h1 class="brand">{{ article.title }}</h1>
+      <p class="tagline">{{ article.summary }}</p>
+      <p class="meta">发布日期：{{ article.publication_date }}</p>
+    </div>
+  </header>
+  <main class="wrap">
+    {% if article.audio_path %}
+    <audio controls preload="none" src="/{{ article.audio_path }}"></audio>
+    {% endif %}
+    <article class="article-body">
+      {{ article.body_html | safe }}
+    </article>
+    <section>
+      <h2>Citations</h2>
+      <ol class="citation-list">
+        {% for citation in article.citations %}
+        <li><a href="{{ citation.url }}" rel="nofollow noopener noreferrer">{{ citation.title or citation.url }}</a></li>
+        {% endfor %}
+      </ol>
+    </section>
+  </main>
+</body>
+</html>

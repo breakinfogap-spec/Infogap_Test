@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ site.site_title }}</title>
+  <link rel="stylesheet" href="/base.css">
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1 class="brand">{{ site.site_title }}</h1>
+      <p class="tagline">每天把昨天的重要新闻翻译成普通加拿大人能用的判断。</p>
+      <p class="meta">发布日期：{{ publication_date }} · 视角：加拿大普通人，温哥华优先</p>
+    </div>
+  </header>
+  <main class="wrap">
+    <section class="topic-grid" aria-label="主题入口">
+      {% for topic in site.topics %}
+      <a class="card" href="/topics/{{ topic.id }}">
+        <h2>{{ topic.name }}</h2>
+        <p>{{ topic.description }}</p>
+      </a>
+      {% endfor %}
+    </section>
+
+    <section class="article-list">
+      <h2>今日分析</h2>
+      {% if articles %}
+        {% for article in articles %}
+        <article class="article">
+          <p class="meta">{{ topic_name(article.topic, site.topics) }} · {{ article.publication_date }}</p>
+          <h2><a href="/articles/{{ article.slug }}">{{ article.title }}</a></h2>
+          <p>{{ article.summary }}</p>
+        </article>
+        {% endfor %}
+      {% else %}
+        <p class="note">自动化流水线已搭好，但还没有发布新闻。完成 Secrets、Cloudflare R2 和连通测试后，这里会出现每日内容。</p>
+      {% endif %}
+    </section>
+  </main>
+  <footer>
+    <div class="wrap">内容只保留最近 5 天。所有分析必须附真实来源。</div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,34 @@
+{
+  "site_title": "信息差日报",
+  "timezone": "America/Vancouver",
+  "retention_days": 5,
+  "topics": [
+    {
+      "id": "finance",
+      "name": "金融",
+      "description": "利率、税务、房贷、就业、物价和家庭现金流。"
+    },
+    {
+      "id": "technology",
+      "name": "科技",
+      "description": "AI、平台政策、网络安全、数字生活和科技公司变化。"
+    },
+    {
+      "id": "living",
+      "name": "民生与政策",
+      "description": "住房、交通、补贴、医疗、教育、城市服务和公众咨询。"
+    },
+    {
+      "id": "immigration",
+      "name": "移民",
+      "description": "联邦移民、BC PNP、工签、学签、永久居民和入籍相关变化。"
+    }
+  ],
+  "editorial_rules": [
+    "先解释对加拿大普通人的实际影响。",
+    "温哥华或大温有特殊影响时，必须单独写温哥华视角。",
+    "区分 City of Vancouver、Metro Vancouver、BC 和联邦政策。",
+    "国际新闻必须认真分析对加拿大生活、价格、就业、移民或市场的传导影响。",
+    "补贴、资格、金额、日期、截止日和申请入口必须有来源支撑。"
+  ]
+}

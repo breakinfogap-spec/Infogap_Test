@@ -1,0 +1,8 @@
+name = "daily-impact-news"
+main = "src/worker.js"
+compatibility_date = "2026-09-14"
+workers_dev = true
+
+[[r2_buckets]]
+binding = "NEWS_BUCKET"
+bucket_name = "daily-impact-news-content"
