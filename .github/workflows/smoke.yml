@@ -3,6 +3,10 @@ name: Smoke Test
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   smoke:
     runs-on: ubuntu-latest
@@ -13,6 +17,8 @@ jobs:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || secrets.GOOGLE_AI_API }}
       GOOGLE_CLOUD_PROJECT_ID: ${{ secrets.GOOGLE_CLOUD_PROJECT_ID }}
       GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+      GOOGLE_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
+      GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_R2_BUCKET: ${{ secrets.CLOUDFLARE_R2_BUCKET }}
@@ -25,6 +31,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - id: google-auth-wif
+        if: ${{ env.GOOGLE_WORKLOAD_IDENTITY_PROVIDER != '' }}
+        uses: google-github-actions/auth@v2
+        with:
+          create_credentials_file: true
+          workload_identity_provider: ${{ env.GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GOOGLE_SERVICE_ACCOUNT_EMAIL }}
+      - id: google-auth-json
+        if: ${{ env.GOOGLE_WORKLOAD_IDENTITY_PROVIDER == '' && env.GOOGLE_APPLICATION_CREDENTIALS_JSON != '' }}
+        uses: google-github-actions/auth@v2
+        with:
+          create_credentials_file: true
+          credentials_json: ${{ env.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
       - run: python -m pip install -r requirements.txt
       - run: npm install
       - run: python scripts/check_config.py --mode smoke

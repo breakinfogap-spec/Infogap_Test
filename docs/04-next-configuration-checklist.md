@@ -26,7 +26,7 @@
 - `DEEPSEEK_API_KEY`：DeepSeek 项目专用 Key。
 - `GEMINI_API_KEY`：Google AI Studio 项目专用 Key。已使用 `GOOGLE_AI_API` 时也可以，workflow 已兼容这个别名。
 - `GOOGLE_CLOUD_PROJECT_ID`：Google Cloud 项目 ID。
-- `GOOGLE_APPLICATION_CREDENTIALS_JSON`：Google Cloud TTS 的调用凭证 JSON。优先后续改成 Workload Identity；早期测试可先用受限服务账号。
+- `GOOGLE_APPLICATION_CREDENTIALS_JSON`：Google Cloud TTS 的调用凭证 JSON。若组织策略禁止创建服务账号密钥，则改用 `GOOGLE_WORKLOAD_IDENTITY_PROVIDER` + `GOOGLE_SERVICE_ACCOUNT_EMAIL`。
 - `CLOUDFLARE_ACCOUNT_ID`：Cloudflare Account ID。
 - `CLOUDFLARE_API_TOKEN`：只给这个项目需要的 Worker、R2、D1 部署权限。
 - `CLOUDFLARE_R2_BUCKET`：新闻正文、证据文件和 MP3 的 bucket 名。

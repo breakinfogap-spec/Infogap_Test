@@ -57,7 +57,14 @@ def call_gemini() -> None:
 
 
 def write_google_credentials() -> Path:
-    raw = os.environ["GOOGLE_APPLICATION_CREDENTIALS_JSON"]
+    existing = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    if existing and Path(existing).exists():
+        return Path(existing)
+
+    raw = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+    if not raw:
+        raise RuntimeError("Google credentials were not found. Use Workload Identity Federation or GOOGLE_APPLICATION_CREDENTIALS_JSON.")
+
     path = Path(os.getenv("RUNNER_TEMP", ".")) / "google-tts-credentials.json"
     if raw.strip().startswith("{"):
         path.write_text(raw, encoding="utf-8")
