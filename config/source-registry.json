@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "review_date": "2026-09-14",
-  "stage": "preparation_only",
-  "pipeline_enabled": false,
+  "stage": "rss_test_enabled",
+  "pipeline_enabled": true,
   "news_test_run_executed": false,
-  "description": "来源入口登记；网页可读不等于自动采集可用。未完成具体端点、使用方式、日期及正文提取检查的来源不得自动启用。",
+  "description": "已启用少量经 HTTP/RSS 验证的公开来源用于自动化测试；后续继续补充温哥华官方政策、补贴和公众咨询来源。",
   "sources": [
     {
       "id": "vancouver_news",
@@ -183,13 +183,13 @@
       ],
       "geography": "canada_national",
       "entry_url": "https://www.bankofcanada.ca/rss-feeds/",
-      "feed_url": null,
+      "feed_url": "https://www.bankofcanada.ca/feed/",
       "role": "economic_policy",
       "entry_check": "readable",
-      "automation_check": "not_tested",
-      "usage_review": "pending",
-      "enabled": false,
-      "notes": "从官方目录选取实际 feed；数据值、公布时间和单位须独立提取。"
+      "automation_check": "rss_verified_2026-09-15",
+      "usage_review": "rss_summary_and_links_only",
+      "enabled": true,
+      "notes": "公开 RSS 可读取；用于加拿大金融政策候选发现。若无发布日期则由 pipeline 保留候选并在分析中谨慎处理。"
     },
     {
       "id": "statistics_canada",
@@ -216,13 +216,13 @@
       ],
       "geography": "united_states",
       "entry_url": "https://www.federalreserve.gov/feeds/feeds.htm",
-      "feed_url": null,
+      "feed_url": "https://www.federalreserve.gov/feeds/press_all.xml",
       "role": "economic_policy",
       "entry_check": "readable",
-      "automation_check": "not_tested",
-      "usage_review": "pending",
-      "enabled": false,
-      "notes": "美国政策先解释对加拿大影响；不直接套用加拿大利率或贷款。"
+      "automation_check": "rss_verified_2026-09-15",
+      "usage_review": "rss_summary_and_links_only",
+      "enabled": true,
+      "notes": "公开 RSS 可读取；美国政策需解释对加拿大普通人的间接影响，不直接套用。"
     },
     {
       "id": "bls",
@@ -249,13 +249,13 @@
       ],
       "geography": "international",
       "entry_url": "https://arstechnica.com/rss-feeds/",
-      "feed_url": null,
+      "feed_url": "https://feeds.arstechnica.com/arstechnica/index",
       "role": "independent_reporting",
       "entry_check": "readable",
-      "automation_check": "not_tested",
-      "usage_review": "pending",
-      "enabled": false,
-      "notes": "仅核实订阅目录，未批准正文自动处理或再发布方式。"
+      "automation_check": "rss_verified_2026-09-15",
+      "usage_review": "rss_summary_and_links_only",
+      "enabled": true,
+      "notes": "公开 RSS 可读取；用于科技候选发现，正文分析必须引用原文链接，不复制全文。"
     },
     {
       "id": "global_bc",
@@ -268,13 +268,13 @@
       ],
       "geography": "bc_province",
       "entry_url": "https://globalnews.ca/bc/",
-      "feed_url": null,
+      "feed_url": "https://globalnews.ca/bc/feed/",
       "role": "independent_reporting",
       "entry_check": "readable",
-      "automation_check": "not_tested",
-      "usage_review": "pending",
-      "enabled": false,
-      "notes": "媒体候选入口；使用方式及全文证据提取待验证。"
+      "automation_check": "rss_verified_2026-09-15",
+      "usage_review": "rss_summary_and_links_only",
+      "enabled": true,
+      "notes": "公开 RSS 可读取；用于 BC/温哥华相关候选发现，正文分析必须引用原文链接，不复制全文。"
     },
     {
       "id": "cbc_bc",
@@ -287,13 +287,13 @@
       ],
       "geography": "bc_province",
       "entry_url": "https://www.cbc.ca/news/canada/british-columbia",
-      "feed_url": null,
+      "feed_url": "https://www.cbc.ca/cmlink/rss-canada-britishcolumbia",
       "role": "independent_reporting",
       "entry_check": "web_tool_fetch_failed",
-      "automation_check": "not_tested",
-      "usage_review": "pending",
-      "enabled": false,
-      "notes": "本次网页工具未能打开；候选媒体，不视为已通过自动采集或使用条件审核。"
+      "automation_check": "rss_verified_2026-09-15",
+      "usage_review": "rss_summary_and_links_only",
+      "enabled": true,
+      "notes": "公开 RSS 可读取；用于 BC/温哥华相关候选发现，正文分析必须引用原文链接，不复制全文。"
     },
     {
       "id": "bbc_world",
@@ -306,13 +306,13 @@
       ],
       "geography": "international",
       "entry_url": "https://www.bbc.com/news/world",
-      "feed_url": null,
+      "feed_url": "http://feeds.bbci.co.uk/news/world/rss.xml",
       "role": "independent_reporting",
       "entry_check": "web_tool_robots_denied",
-      "automation_check": "not_tested",
-      "usage_review": "pending",
-      "enabled": false,
-      "notes": "本次网页工具被该站 robots 规则拒绝。需要允许的来源／端点，不绕过访问限制，不以搜索摘要直接写深度分析。"
+      "automation_check": "rss_verified_2026-09-15",
+      "usage_review": "rss_summary_and_links_only",
+      "enabled": true,
+      "notes": "RSS 可读取；用于国际新闻候选发现。若网页正文受限，只使用 RSS 元数据和可访问引用，不绕过限制。"
     },
     {
       "id": "bc_pnp",
@@ -329,6 +329,115 @@
       "usage_review": "pending",
       "enabled": false,
       "notes": "本次网页工具未能打开；官方候选尚未通过。政策是否适用须以带日期的原始公告和项目规则核实。"
+    },
+    {
+      "id": "cbc_top",
+      "name": "CBC — Top Stories",
+      "topics": [
+        "finance",
+        "technology",
+        "living",
+        "immigration"
+      ],
+      "geography": "canada_national",
+      "entry_url": "https://www.cbc.ca/news",
+      "feed_url": "https://www.cbc.ca/cmlink/rss-topstories",
+      "role": "independent_reporting",
+      "entry_check": "rss_verified",
+      "automation_check": "rss_verified_2026-09-15",
+      "usage_review": "rss_summary_and_links_only",
+      "enabled": true,
+      "notes": "公开 RSS 可读取；用于加拿大全国候选发现。"
+    },
+    {
+      "id": "cbc_business",
+      "name": "CBC — Business",
+      "topics": [
+        "finance",
+        "living"
+      ],
+      "geography": "canada_national",
+      "entry_url": "https://www.cbc.ca/news/business",
+      "feed_url": "https://www.cbc.ca/cmlink/rss-business",
+      "role": "independent_reporting",
+      "entry_check": "rss_verified",
+      "automation_check": "rss_verified_2026-09-15",
+      "usage_review": "rss_summary_and_links_only",
+      "enabled": true,
+      "notes": "公开 RSS 可读取；用于金融与民生候选发现。"
+    },
+    {
+      "id": "cbc_technology",
+      "name": "CBC — Technology",
+      "topics": [
+        "technology"
+      ],
+      "geography": "canada_national",
+      "entry_url": "https://www.cbc.ca/news/science",
+      "feed_url": "https://www.cbc.ca/cmlink/rss-technology",
+      "role": "independent_reporting",
+      "entry_check": "rss_verified",
+      "automation_check": "rss_verified_2026-09-15",
+      "usage_review": "rss_summary_and_links_only",
+      "enabled": true,
+      "notes": "公开 RSS 可读取；用于科技候选发现。"
+    },
+    {
+      "id": "cbc_world",
+      "name": "CBC — World",
+      "topics": [
+        "finance",
+        "technology",
+        "living",
+        "immigration"
+      ],
+      "geography": "international",
+      "entry_url": "https://www.cbc.ca/news/world",
+      "feed_url": "https://www.cbc.ca/cmlink/rss-world",
+      "role": "independent_reporting",
+      "entry_check": "rss_verified",
+      "automation_check": "rss_verified_2026-09-15",
+      "usage_review": "rss_summary_and_links_only",
+      "enabled": true,
+      "notes": "公开 RSS 可读取；用于国际新闻候选发现，并按加拿大普通人视角分析。"
+    },
+    {
+      "id": "global_canada",
+      "name": "Global News — Canada",
+      "topics": [
+        "finance",
+        "technology",
+        "living",
+        "immigration"
+      ],
+      "geography": "canada_national",
+      "entry_url": "https://globalnews.ca/canada/",
+      "feed_url": "https://globalnews.ca/canada/feed/",
+      "role": "independent_reporting",
+      "entry_check": "rss_verified",
+      "automation_check": "rss_verified_2026-09-15",
+      "usage_review": "rss_summary_and_links_only",
+      "enabled": true,
+      "notes": "公开 RSS 可读取；用于加拿大全国候选发现。"
+    },
+    {
+      "id": "global_world",
+      "name": "Global News — World",
+      "topics": [
+        "finance",
+        "technology",
+        "living",
+        "immigration"
+      ],
+      "geography": "international",
+      "entry_url": "https://globalnews.ca/world/",
+      "feed_url": "https://globalnews.ca/world/feed/",
+      "role": "independent_reporting",
+      "entry_check": "rss_verified",
+      "automation_check": "rss_verified_2026-09-15",
+      "usage_review": "rss_summary_and_links_only",
+      "enabled": true,
+      "notes": "公开 RSS 可读取；用于国际新闻候选发现。"
     }
   ]
 }

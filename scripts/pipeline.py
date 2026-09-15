@@ -42,12 +42,34 @@ def entry_datetime(entry: dict) -> dt.datetime | None:
 def collect_candidates(source_registry: dict, date_text: str, timezone: str) -> list[dict]:
     start, end = vancouver_window(date_text, timezone)
     candidates: list[dict] = []
+    source_debug: list[dict] = []
 
     for source in source_registry.get("sources", []):
         if not source.get("enabled") or not source.get("feed_url"):
             continue
 
-        feed = feedparser.parse(source["feed_url"])
+        debug = {
+            "id": source.get("id"),
+            "url": source.get("feed_url"),
+            "entries": 0,
+            "date_matches": 0,
+            "error": "",
+        }
+        source_debug.append(debug)
+
+        try:
+            response = requests.get(
+                source["feed_url"],
+                headers={"User-Agent": "InfoGapTest/0.1 (+https://github.com/breakinfogap-spec/Infogap_Test)"},
+                timeout=8,
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            debug["error"] = f"{type(exc).__name__}: {exc}"
+            continue
+
+        feed = feedparser.parse(response.content)
+        debug["entries"] = len(feed.entries)
         for entry in feed.entries:
             published = entry_datetime(entry)
             if published:
@@ -57,6 +79,7 @@ def collect_candidates(source_registry: dict, date_text: str, timezone: str) -> 
             else:
                 local_published = None
 
+            debug["date_matches"] += 1
             candidates.append(
                 {
                     "source_id": source["id"],
@@ -70,7 +93,11 @@ def collect_candidates(source_registry: dict, date_text: str, timezone: str) -> 
                 }
             )
 
+    collect_candidates.last_debug = source_debug
     return candidates
+
+
+collect_candidates.last_debug = []
 
 
 def article_stub(site: dict, publication_date: str) -> list[dict]:
@@ -312,6 +339,7 @@ def main() -> int:
 
     if not candidates and not args.allow_empty:
         print("No enabled source produced candidates. Enable verified feeds before the real run.", file=sys.stderr)
+        print(json.dumps({"source_debug": collect_candidates.last_debug}, ensure_ascii=False, indent=2), file=sys.stderr)
         return 1
 
     if args.use_llm:
