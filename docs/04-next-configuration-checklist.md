@@ -24,7 +24,7 @@
 进入 GitHub repo -> Settings -> Secrets and variables -> Actions -> New repository secret，后续需要放这些值：
 
 - `DEEPSEEK_API_KEY`：DeepSeek 项目专用 Key。
-- `GEMINI_API_KEY`：Google AI Studio 项目专用 Key。
+- `GEMINI_API_KEY`：Google AI Studio 项目专用 Key。已使用 `GOOGLE_AI_API` 时也可以，workflow 已兼容这个别名。
 - `GOOGLE_CLOUD_PROJECT_ID`：Google Cloud 项目 ID。
 - `GOOGLE_APPLICATION_CREDENTIALS_JSON`：Google Cloud TTS 的调用凭证 JSON。优先后续改成 Workload Identity；早期测试可先用受限服务账号。
 - `CLOUDFLARE_ACCOUNT_ID`：Cloudflare Account ID。

@@ -29,7 +29,7 @@ This repository is at the automation scaffold stage.
 Add these in GitHub repo -> Settings -> Secrets and variables -> Actions.
 
 - `DEEPSEEK_API_KEY`
-- `GEMINI_API_KEY`
+- `GEMINI_API_KEY` or `GOOGLE_AI_API`
 - `GOOGLE_CLOUD_PROJECT_ID`
 - `GOOGLE_APPLICATION_CREDENTIALS_JSON`
 - `CLOUDFLARE_ACCOUNT_ID`

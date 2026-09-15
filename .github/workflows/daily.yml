@@ -23,7 +23,7 @@ jobs:
       LLM_REVIEW_MODEL: gemini-3.5-flash-lite
       TTS_VOICE: cmn-CN-Wavenet-A
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || secrets.GOOGLE_AI_API }}
       GOOGLE_CLOUD_PROJECT_ID: ${{ secrets.GOOGLE_CLOUD_PROJECT_ID }}
       GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
