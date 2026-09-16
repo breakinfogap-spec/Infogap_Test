@@ -10,8 +10,9 @@ on:
         description: "Upload generated files to Cloudflare R2 and deploy Worker"
         type: boolean
         default: false
-  schedule:
-    - cron: "17 12 * * *"
+  # Paused while we review content quality by hand. Re-enable when ready to publish daily.
+  # schedule:
+  #   - cron: "17 12 * * *"
 
 permissions:
   contents: read
@@ -71,6 +72,13 @@ jobs:
           fi
       - name: Generate site
         run: python scripts/pipeline.py --date "${{ steps.dates.outputs.date }}" --use-llm --review --tts
+      - name: Upload generated site for review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-site
+          path: generated/
+          retention-days: 7
       - name: Deploy Worker
         if: github.event_name == 'schedule' || github.event.inputs.publish == 'true'
         run: npx wrangler deploy
