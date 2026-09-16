@@ -7,36 +7,23 @@
   <link rel="stylesheet" href="/base.css">
 </head>
 <body>
-  <header>
+  <header class="home-hero">
     <div class="wrap">
-      <h1 class="brand">{{ site.site_title }}</h1>
-      <p class="tagline">每天把昨天的重要新闻翻译成普通加拿大人能用的判断。</p>
       <p class="meta">发布日期：{{ publication_date }} · 视角：加拿大普通人，温哥华优先</p>
+      <h1 class="brand">{{ site.site_title }}</h1>
+      <p class="tagline">今天有 {{ total_news }} 条新闻会对我们的生活造成影响。</p>
     </div>
   </header>
   <main class="wrap">
     <section class="topic-grid" aria-label="主题入口">
-      {% for topic in site.topics %}
-      <a class="card" href="/topics/{{ topic.id }}">
-        <h2>{{ topic.name }}</h2>
-        <p>{{ topic.description }}</p>
+      {% for section in sections %}
+      <a class="card" href="/topics/{{ section.topic }}">
+        <span class="section-count">{{ section.news_items | length }}</span>
+        <h2>{{ section.topic_name }}</h2>
+        <p>{{ section.topic_description }}</p>
+        <small>{{ section.overview }}</small>
       </a>
       {% endfor %}
-    </section>
-
-    <section class="article-list">
-      <h2>今日分析</h2>
-      {% if articles %}
-        {% for article in articles %}
-        <article class="article">
-          <p class="meta">{{ topic_name(article.topic, site.topics) }} · {{ article.publication_date }}</p>
-          <h2><a href="/articles/{{ article.slug }}">{{ article.title }}</a></h2>
-          <p>{{ article.summary }}</p>
-        </article>
-        {% endfor %}
-      {% else %}
-        <p class="note">自动化流水线已搭好，但还没有发布新闻。完成 Secrets、Cloudflare R2 和连通测试后，这里会出现每日内容。</p>
-      {% endif %}
     </section>
   </main>
   <footer>

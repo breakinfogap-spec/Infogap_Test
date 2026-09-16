@@ -3,24 +3,42 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ topic.name }} · {{ site.site_title }}</title>
+  <title>{{ section.topic_name }} · {{ site.site_title }}</title>
   <link rel="stylesheet" href="/base.css">
 </head>
 <body>
   <header>
     <div class="wrap">
-      <p class="meta"><a href="/">首页</a></p>
-      <h1 class="brand">{{ topic.name }}</h1>
-      <p class="tagline">{{ topic.description }}</p>
+      <p class="meta"><a href="/">首页</a> · 发布日期：{{ section.publication_date }}</p>
+      <h1 class="brand">{{ section.topic_name }}</h1>
+      <p class="tagline">{{ section.overview }}</p>
     </div>
   </header>
-  <main class="wrap article-list">
-    {% if articles %}
-      {% for article in articles %}
-      <article class="article">
-        <p class="meta">{{ article.publication_date }}</p>
-        <h2><a href="/articles/{{ article.slug }}">{{ article.title }}</a></h2>
-        <p>{{ article.summary }}</p>
+  <main class="wrap section-report">
+    {% if section.audio_path %}
+    <audio controls preload="none" src="/{{ section.audio_path }}"></audio>
+    {% endif %}
+
+    {% if section.news_items %}
+      {% for item in section.news_items %}
+      <article class="news-analysis" id="{{ item.id }}">
+        <p class="meta">{{ section.topic_name }}</p>
+        <h2>{{ loop.index }}. {{ item.title }}</h2>
+        <div class="article-body">
+          {{ item.body_html | safe }}
+        </div>
+        <section class="impact-block">
+          <h3>对我们的影响</h3>
+          {{ item.impact_html | safe }}
+        </section>
+        <section class="citations-block">
+          <h3>Citations</h3>
+          <ol class="citation-list">
+            {% for citation in item.citations %}
+            <li><span>[{{ citation.ref }}]</span> <a href="{{ citation.url }}" rel="nofollow noopener noreferrer">{{ citation.title }}</a><small>{{ citation.source_name }}</small></li>
+            {% endfor %}
+          </ol>
+        </section>
       </article>
       {% endfor %}
     {% else %}

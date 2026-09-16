@@ -35,6 +35,10 @@ header {
   border-bottom: 1px solid var(--line);
 }
 
+.home-hero {
+  padding: 44px 0 24px;
+}
+
 .brand {
   margin: 0;
   font-size: clamp(28px, 5vw, 48px);
@@ -52,18 +56,38 @@ main {
 
 .topic-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 14px;
   margin: 24px 0 36px;
 }
 
 .card {
+  position: relative;
   display: block;
-  padding: 18px;
+  min-height: 190px;
+  padding: 20px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--paper);
   text-decoration: none;
+}
+
+.card:hover {
+  border-color: var(--accent);
+}
+
+.section-count {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
 }
 
 .card h2,
@@ -73,9 +97,15 @@ main {
 }
 
 .card p,
+.card small,
 .meta,
 .note {
   color: var(--muted);
+}
+
+.card small {
+  display: block;
+  margin-top: 16px;
 }
 
 .article-list {
@@ -99,6 +129,40 @@ main {
   font-size: 18px;
 }
 
+.article-body h2,
+.article-body h3 {
+  margin: 30px 0 10px;
+}
+
+.section-report {
+  max-width: 860px;
+}
+
+.news-analysis {
+  padding: 24px 0 42px;
+  border-bottom: 1px solid var(--line);
+}
+
+.news-analysis h2 {
+  max-width: 780px;
+  margin: 0 0 18px;
+  font-size: clamp(26px, 4vw, 38px);
+  line-height: 1.22;
+}
+
+.impact-block {
+  max-width: 760px;
+  margin: 28px 0;
+  padding: 18px 20px;
+  border-left: 4px solid var(--accent);
+  background: var(--paper);
+}
+
+.impact-block h3,
+.citations-block h3 {
+  margin: 0 0 10px;
+}
+
 audio {
   width: 100%;
   margin: 18px 0;
@@ -106,6 +170,20 @@ audio {
 
 .citation-list {
   padding-left: 20px;
+}
+
+.citation-list li {
+  margin: 8px 0;
+}
+
+.citation-list span {
+  color: var(--accent-2);
+  font-weight: 700;
+}
+
+.citation-list small {
+  display: block;
+  color: var(--muted);
 }
 
 footer {
