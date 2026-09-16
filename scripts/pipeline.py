@@ -23,7 +23,52 @@ RUNS = ROOT / "runs"
 SOURCE_REF_RE = re.compile(r"\[S(\d+)\]")
 URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
 BULLET_RE = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)", re.MULTILINE)
+DASH_RE = re.compile(r"[—–]|--")
 LOCAL_SOURCE_IDS = {"global_bc", "cbc_bc", "bc_news", "vancouver_news", "vancouver_grants", "vancouver_consultations", "translink"}
+MIN_NEWS_CHARS = 650
+SINGLE_ITEM_SECTION_MIN_CHARS = 900
+MAX_HEADINGS_PER_ITEM = 2
+NEWS_ANALYST_SYSTEM_PROMPT = """# System Prompt: 新闻解读员
+
+你是一位帮普通人读懂新闻的解读员。不堆砌术语，不卖弄深度，就是把一件事讲清楚、讲透。
+
+## 结构模板
+
+### 标题
+
+鲜明有力，直接点出观点或核心议题。
+
+### 开头（引述与破题）
+
+一句话概括：发生了什么事？
+直接写出你的分析：这件事意味着什么？不要用标签式提示语。
+
+### 主体（分析与论证）
+
+原因分析：
+为什么会发生这件事？根源是什么？政策推动、利益驱动、技术变革或社会需求分别是什么？
+
+影响评估：
+会带来什么好的影响？会带来什么坏的影响？对普通人有什么具体影响，包括钱、时间、选择和生活？
+
+本质洞察：
+这件事映射了什么更大的趋势或规律？类似的事情以前发生过吗？别的地方有吗？
+
+### 结尾（总结与展望）
+
+先用“最后，总的来说，xxxxxx”收住全文。
+提出解决办法或理性呼吁。
+最后另起一段，固定格式：
+这个对于[具体群体]的影响是：
+[短期] / [中期] / [长期]
+
+## 风格规则
+
+用高中生的词汇水平。
+每段 5-7 句话，不要太长。
+不用专业术语，必须出现时加一句解释。
+不用破折号。
+像跟朋友聊天一样解释，不是写报告。"""
 
 
 def load_json(path: Path) -> dict:
@@ -216,18 +261,25 @@ def call_deepseek_for_sections(candidates: list[dict], site: dict, date_text: st
             "Sources are identified only by refs like [S1]. You must not output URLs.",
             "Every specific claim about money, dates, eligibility, deadlines, quotes, or opposing views must cite one or more source refs.",
             "Use only source_refs that appear in the provided candidates.",
+            "Use topic_candidates as routing hints. If a candidate includes local_vancouver, prefer the 温哥华本地 section unless another section is clearly more important.",
+            "BC/Vancouver airport, school, city service, safety, housing, transit, business, or local politics stories should go to local_vancouver or living, not only technology.",
         ],
         "writing_template": {
             "section_overview": "今天有 X 条新闻会对我们的生活造成影响。",
             "per_news_item": [
-                "Question-style title, for example: 加拿大主要机场私有化，意味着什么？",
+                "A clear, forceful title that directly names the core issue or viewpoint.",
                 "Full readable Chinese paragraphs, not bullet points.",
-                "First explain what happened.",
-                "Then expand with natural question-style subheadings using Markdown ## headings.",
+                "Follow the NEWS_ANALYST_SYSTEM_PROMPT style and structure.",
+                "First summarize what happened in one sentence, then directly explain what it means.",
+                "Use mostly full paragraphs. Markdown ## question-style subheadings are optional, not mandatory.",
+                "Use 0-2 subheadings per news item only when they introduce genuinely distinct questions; never add a heading before every paragraph.",
                 "Include key data, important statements, different viewpoints, opposition, and relevant precedent when source-backed.",
-                "End with a separate impact_markdown paragraph explaining concrete effects on ordinary Canadian residents: money, time, convenience, deadlines, or actions.",
+                "End impact_markdown with the fixed format: 这个对于[具体群体]的影响是： [短期] / [中期] / [长期].",
+                "Do not use em dashes or Chinese dash punctuation.",
             ],
-            "length_target": "Each news item should be 800-1200 Chinese characters when evidence supports it.",
+            "section_composition": "Target 2-3 news items per section when evidence supports them. Avoid weak single-item sections; if a section has only one news item, it must be a deeper source-backed feature, not a short explainer.",
+            "local_section_rule": "If any candidates have topic_candidates containing local_vancouver, generate a 温哥华本地 section from the strongest local candidates unless all are irrelevant to residents.",
+            "length_target": "Each news item must be 800-1200 Chinese characters when evidence supports it. Do not return short 400-600 character explainers.",
         },
         "candidates": candidates_for_prompt(numbered_candidates),
         "required_json_shape": {
@@ -237,10 +289,10 @@ def call_deepseek_for_sections(candidates: list[dict], site: dict, date_text: st
                     "overview": "今天有 X 条新闻会对我们的生活造成影响。",
                     "news_items": [
                         {
-                            "title": "Chinese question-style headline",
+                            "title": "clear Chinese headline that directly names the core issue or viewpoint",
                             "summary": "one sentence",
-                            "body_markdown": "article-like analysis in Simplified Chinese with [S1] refs and no bullet points",
-                            "impact_markdown": "对我们的影响：specific impact paragraph with [S1] refs",
+                            "body_markdown": "article-like analysis in Simplified Chinese following NEWS_ANALYST_SYSTEM_PROMPT, with [S1] refs, no bullet points, and 0-2 optional Markdown ## subheadings",
+                            "impact_markdown": "fixed final impact format: 这个对于[具体群体]的影响是： [短期] / [中期] / [长期], with [S1] refs",
                             "source_refs": ["S1", "S2"],
                             "tts_text": "plain spoken Chinese text based only on title/body/impact",
                         }
@@ -257,17 +309,28 @@ def call_deepseek_for_sections(candidates: list[dict], site: dict, date_text: st
             "messages": [
                 {
                     "role": "system",
-                    "content": "You are an evidence-first Chinese news analyst. Return strict JSON only. Never output source URLs.",
+                    "content": (
+                        NEWS_ANALYST_SYSTEM_PROMPT
+                        + "\n\n硬性技术规则：Return strict JSON only. Never output source URLs. "
+                        "Only cite source refs like [S1]. Write complete article-style analysis, not outlines. "
+                        "Each news item should usually be at least 800 Chinese characters. "
+                        "Do not write bullet points in the article body or impact text."
+                    ),
                 },
                 {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
             ],
             "temperature": 0.2,
+            "max_tokens": 8192,
+            "response_format": {"type": "json_object"},
         },
         timeout=120,
     )
     response.raise_for_status()
     text = response.json()["choices"][0]["message"]["content"]
-    payload = json.loads(extract_json(text))
+    try:
+        payload = json.loads(extract_json(text))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"DeepSeek returned invalid JSON after {len(text)} characters: {exc}") from exc
     return normalize_section_reports(payload.get("sections", []), numbered_candidates, site, date_text)
 
 
@@ -298,8 +361,36 @@ def has_bullet_markers(markdown: str) -> bool:
     return bool(BULLET_RE.search(markdown))
 
 
+def has_dash_punctuation(markdown: str) -> bool:
+    return bool(DASH_RE.search(markdown))
+
+
 def has_source_url(markdown: str) -> bool:
     return bool(URL_RE.search(markdown))
+
+
+def analysis_char_count(*parts: str) -> int:
+    text = "\n".join(parts)
+    text = re.sub(r"\[S\d+\]", "", text)
+    text = re.sub(r"#+\s*", "", text)
+    text = re.sub(r"\s+", "", text)
+    return len(text)
+
+
+def heading_count(markdown: str) -> int:
+    return len(re.findall(r"^#{2,3}\s+", markdown, flags=re.MULTILINE))
+
+
+def limit_headings(markdown: str, max_headings: int = MAX_HEADINGS_PER_ITEM) -> str:
+    kept = 0
+    lines = []
+    for line in markdown.splitlines():
+        if re.match(r"^#{2,3}\s+", line):
+            kept += 1
+            if kept > max_headings:
+                line = re.sub(r"^#{2,3}\s+", "", line).strip()
+        lines.append(line)
+    return "\n".join(lines).strip()
 
 
 def short_summary(text: str) -> str:
@@ -339,11 +430,17 @@ def normalize_section_reports(raw_sections: list[dict], sources: list[dict], sit
         news_items = []
         for raw_item in raw_section.get("news_items") or []:
             title = str(raw_item.get("title") or "").strip()
-            body_markdown = str(raw_item.get("body_markdown") or "").strip()
+            body_markdown = limit_headings(str(raw_item.get("body_markdown") or "").strip())
             impact_markdown = str(raw_item.get("impact_markdown") or "").strip()
             if not title or not body_markdown or not impact_markdown:
                 continue
             if has_bullet_markers(body_markdown) or has_bullet_markers(impact_markdown):
+                continue
+            if has_dash_punctuation(body_markdown) or has_dash_punctuation(impact_markdown):
+                continue
+            item_heading_count = heading_count(body_markdown)
+            item_char_count = analysis_char_count(body_markdown, impact_markdown)
+            if item_char_count < MIN_NEWS_CHARS:
                 continue
             combined_text = "\n".join([title, body_markdown, impact_markdown, str(raw_item.get("tts_text") or "")])
             if has_source_url(combined_text):
@@ -369,10 +466,14 @@ def normalize_section_reports(raw_sections: list[dict], sources: list[dict], sit
                     "source_refs": refs,
                     "citations": citations_for_refs(refs, source_by_ref),
                     "tts_text": tts_text,
+                    "analysis_chars": item_char_count,
+                    "heading_count": item_heading_count,
                 }
             )
 
         if not news_items:
+            continue
+        if len(news_items) == 1 and news_items[0]["analysis_chars"] < SINGLE_ITEM_SECTION_MIN_CHARS:
             continue
 
         reports.append(
@@ -394,6 +495,13 @@ def total_news_count(sections: list[dict]) -> int:
     return sum(len(section.get("news_items", [])) for section in sections)
 
 
+def truncate_utf8(text: str, max_bytes: int) -> str:
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    return encoded[:max_bytes].decode("utf-8", errors="ignore").rstrip()
+
+
 def review_with_gemini(sections: list[dict]) -> None:
     if not sections:
         return
@@ -403,8 +511,12 @@ def review_with_gemini(sections: list[dict]) -> None:
     prompt = {
         "task": (
             "Check these Chinese section reports. Return JSON with ok true/false. "
-            "They must read like complete analysis articles, not bullet points; include multiple viewpoints where source-backed; "
-            "have a separate concrete impact paragraph; and every specific money/date/eligibility/deadline claim must be supported by source refs."
+            "They must read like clear news explainers for ordinary readers, not bullet points or formal reports; "
+            "titles should directly name the core issue or viewpoint; include multiple viewpoints where source-backed; "
+            "use full paragraphs with at most two useful subheadings per news item; avoid heading-heavy outlines; "
+            "avoid em dashes; end with a final impact paragraph using the fixed short/mid/long term format; "
+            "avoid weak single-item sections unless the single item is a deeper feature; "
+            "and every specific money/date/eligibility/deadline claim must be supported by source refs."
         ),
         "sections": [
             {
@@ -416,6 +528,8 @@ def review_with_gemini(sections: list[dict]) -> None:
                         "body_markdown": item["body_markdown"][:4000],
                         "impact_markdown": item["impact_markdown"][:1000],
                         "source_refs": item["source_refs"],
+                        "analysis_chars": item.get("analysis_chars"),
+                        "heading_count": item.get("heading_count"),
                     }
                     for item in section["news_items"]
                 ],
@@ -467,7 +581,7 @@ def synthesize_tts(sections: list[dict], date_text: str) -> None:
             ]
         )
         response = client.synthesize_speech(
-            input=texttospeech.SynthesisInput(text=spoken_text[:4500]),
+            input=texttospeech.SynthesisInput(text=truncate_utf8(spoken_text, 4800)),
             voice=texttospeech.VoiceSelectionParams(language_code="cmn-CN", name=voice_name),
             audio_config=texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3),
         )
@@ -577,6 +691,24 @@ def main() -> int:
         sections = call_deepseek_for_sections(candidates, site, args.date)
     else:
         sections = section_stub(site, args.date)
+
+    if args.use_llm and candidates and not sections:
+        write_run_artifacts(args.date, candidates, sections, site)
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "date": args.date,
+                    "candidates": len(candidates),
+                    "sections": 0,
+                    "news_items": 0,
+                    "error": "LLM output did not pass section report quality gates.",
+                },
+                ensure_ascii=False,
+            ),
+            file=sys.stderr,
+        )
+        return 1
 
     if args.review:
         review_with_gemini(sections)
