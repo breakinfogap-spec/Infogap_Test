@@ -2,15 +2,18 @@
 
 Daily AI news analysis site for Vancouver-first Canadian readers.
 
-The product is intentionally small: one home page, topic sections, article detail pages, audio playback, and citations. The system should run automatically every day after the required secrets and Cloudflare resources are configured.
+The product is intentionally small: one home page, section pages, per-article audio playback, and citations. The system should run automatically every day after the required secrets and Cloudflare resources are configured.
 
 ## Current Stage
 
-This repository is at the automation scaffold stage.
+This repository has a working section-based generation pipeline.
 
 - It does not contain real API keys.
 - The default scripts can run without publishing.
-- The real 2026-09-13 test run is locked until all connectivity checks pass.
+- DeepSeek is called once per section to keep each JSON response within its output budget.
+- A section is published only when at least two articles pass the 800-1500 character quality gate.
+- Rejected drafts and their actual character counts are recorded in `runs/<date>/quality-rejections.json`.
+- Google TTS creates one complete MP3 per article, splitting input into chunks of at most 4000 UTF-8 bytes.
 - News content and MP3 files are generated artifacts and should not be committed to git.
 
 ## Stack
@@ -59,6 +62,7 @@ Run static checks:
 ```bash
 python scripts/check_config.py --mode local
 python -m py_compile scripts/check_config.py scripts/connectivity_smoke.py scripts/pipeline.py
+python -m unittest discover -s tests
 ```
 
 ## Cloudflare

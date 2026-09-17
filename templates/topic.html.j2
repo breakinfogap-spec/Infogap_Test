@@ -15,15 +15,14 @@
     </div>
   </header>
   <main class="wrap section-report">
-    {% if section.audio_path %}
-    <audio controls preload="none" src="/{{ section.audio_path }}"></audio>
-    {% endif %}
-
     {% if section.news_items %}
       {% for item in section.news_items %}
       <article class="news-analysis" id="{{ item.id }}">
         <p class="meta">{{ section.topic_name }}</p>
         <h2>{{ loop.index }}. {{ item.title }}</h2>
+        {% if item.audio_path %}
+        <audio controls preload="none" src="/{{ item.audio_path }}"></audio>
+        {% endif %}
         <div class="article-body">
           {{ item.body_html | safe }}
         </div>

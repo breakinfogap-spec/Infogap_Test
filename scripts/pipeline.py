@@ -8,7 +8,9 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -25,9 +27,12 @@ URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
 BULLET_RE = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)", re.MULTILINE)
 DASH_RE = re.compile(r"[—–]|--")
 LOCAL_SOURCE_IDS = {"global_bc", "cbc_bc", "bc_news", "vancouver_news", "vancouver_grants", "vancouver_consultations", "translink"}
-MIN_NEWS_CHARS = 650
-SINGLE_ITEM_SECTION_MIN_CHARS = 900
+MIN_NEWS_CHARS = 800
+MAX_NEWS_CHARS = 1500
+MIN_NEWS_ITEMS_PER_SECTION = 2
 MAX_HEADINGS_PER_ITEM = 2
+TTS_CHUNK_MAX_BYTES = 4000
+IMPACT_PREFIX_RE = re.compile(r"这个对于[^\n]{1,80}的影响是[：:]")
 NEWS_ANALYST_SYSTEM_PROMPT = """# System Prompt: 新闻解读员
 
 你是一位帮普通人读懂新闻的解读员。不堆砌术语，不卖弄深度，就是把一件事讲清楚、讲透。
@@ -248,90 +253,150 @@ def candidates_for_prompt(candidates: list[dict]) -> list[dict]:
     ]
 
 
-def call_deepseek_for_sections(candidates: list[dict], site: dict, date_text: str) -> list[dict]:
+def candidates_for_section(candidates: list[dict], topic: str) -> list[dict]:
+    return [candidate for candidate in candidates if topic in candidate.get("topic_candidates", [])]
+
+
+def log_quality_rejection(rejections: list[dict], topic: str, reason: str, **details: object) -> None:
+    entry = {"topic": topic, "reason": reason, **details}
+    rejections.append(entry)
+    print(json.dumps({"quality_gate_rejection": entry}, ensure_ascii=False), file=sys.stderr)
+
+
+def call_deepseek_for_sections(
+    candidates: list[dict], site: dict, date_text: str, rejections: list[dict] | None = None
+) -> list[dict]:
+    if rejections is None:
+        rejections = []
     api_key = os.environ["DEEPSEEK_API_KEY"]
     model = os.getenv("LLM_PRIMARY_MODEL", "deepseek-chat")
     numbered_candidates = number_candidates(candidates, site)
-    prompt = {
-        "date": date_text,
-        "audience": "ordinary Canadians; Vancouver local readers have a dedicated section",
-        "topics": site["topics"],
-        "editorial_rules": site["editorial_rules"],
-        "source_rules": [
-            "Sources are identified only by refs like [S1]. You must not output URLs.",
-            "Every specific claim about money, dates, eligibility, deadlines, quotes, or opposing views must cite one or more source refs.",
-            "Use only source_refs that appear in the provided candidates.",
-            "Use topic_candidates as routing hints. If a candidate includes local_vancouver, prefer the 温哥华本地 section unless another section is clearly more important.",
-            "BC/Vancouver airport, school, city service, safety, housing, transit, business, or local politics stories should go to local_vancouver or living, not only technology.",
-        ],
-        "writing_template": {
-            "section_overview": "今天有 X 条新闻会对我们的生活造成影响。",
-            "per_news_item": [
-                "A clear, forceful title that directly names the core issue or viewpoint.",
-                "Full readable Chinese paragraphs, not bullet points.",
-                "Follow the NEWS_ANALYST_SYSTEM_PROMPT style and structure.",
-                "First summarize what happened in one sentence, then directly explain what it means.",
-                "Use mostly full paragraphs. Markdown ## question-style subheadings are optional, not mandatory.",
-                "Use 0-2 subheadings per news item only when they introduce genuinely distinct questions; never add a heading before every paragraph.",
-                "Include key data, important statements, different viewpoints, opposition, and relevant precedent when source-backed.",
-                "End impact_markdown with the fixed format: 这个对于[具体群体]的影响是： [短期] / [中期] / [长期].",
-                "Do not use em dashes or Chinese dash punctuation.",
+    reports = []
+
+    for topic in site["topics"]:
+        topic_id = topic["id"]
+        topic_candidates = candidates_for_section(numbered_candidates, topic_id)
+        if len(topic_candidates) < MIN_NEWS_ITEMS_PER_SECTION:
+            log_quality_rejection(
+                rejections,
+                topic_id,
+                "insufficient_candidate_material",
+                candidate_count=len(topic_candidates),
+                required_candidates=MIN_NEWS_ITEMS_PER_SECTION,
+            )
+            continue
+
+        prompt = {
+            "date": date_text,
+            "audience": "ordinary Canadians; Vancouver local readers have a dedicated section",
+            "target_section": topic,
+            "editorial_rules": site["editorial_rules"],
+            "source_rules": [
+                "Sources are identified only by refs like [S1]. You must not output URLs.",
+                "Every specific claim about money, dates, eligibility, deadlines, quotes, or opposing views must cite one or more source refs.",
+                "Use only source_refs that appear in the provided candidates.",
+                "Write only the requested target_section. Do not return other sections.",
             ],
-            "section_composition": "Target 2-3 news items per section when evidence supports them. Avoid weak single-item sections; if a section has only one news item, it must be a deeper source-backed feature, not a short explainer.",
-            "local_section_rule": "If any candidates have topic_candidates containing local_vancouver, generate a 温哥华本地 section from the strongest local candidates unless all are irrelevant to residents.",
-            "length_target": "Each news item must be 800-1200 Chinese characters when evidence supports it. Do not return short 400-600 character explainers.",
-        },
-        "candidates": candidates_for_prompt(numbered_candidates),
-        "required_json_shape": {
-            "sections": [
-                {
-                    "topic": "finance|technology|living|immigration|local_vancouver",
+            "writing_template": {
+                "section_overview": "今天有 X 条新闻会对我们的生活造成影响。",
+                "section_composition": "Return 2-3 distinct, evidence-backed news analyses. A section with fewer than two accepted articles will not be published.",
+                "per_news_item": [
+                    "A clear, forceful title that directly names the core issue or viewpoint.",
+                    "Write 800-1500 Chinese characters across body_markdown and impact_markdown.",
+                    "Use full readable Chinese paragraphs, never bullet points.",
+                    "Start by saying what happened in one sentence and directly explain what it means.",
+                    "Use 0-2 optional Markdown ## subheadings only for genuinely distinct questions.",
+                    "The final paragraph of body_markdown must begin with 最后，总的来说，.",
+                    "Put the impact block in impact_markdown only, exactly once, and nowhere in body_markdown.",
+                    "impact_markdown must start with 这个对于[具体群体]的影响是： and contain [短期], [中期], and [长期] in that order.",
+                    "Nothing may follow the impact block except source refs attached to its claims.",
+                    "Do not use em dashes, Chinese dash punctuation, bullet points, or URLs.",
+                ],
+            },
+            "candidates": candidates_for_prompt(topic_candidates),
+            "required_json_shape": {
+                "section": {
+                    "topic": topic_id,
                     "overview": "今天有 X 条新闻会对我们的生活造成影响。",
                     "news_items": [
                         {
-                            "title": "clear Chinese headline that directly names the core issue or viewpoint",
+                            "title": "clear Chinese headline",
                             "summary": "one sentence",
-                            "body_markdown": "article-like analysis in Simplified Chinese following NEWS_ANALYST_SYSTEM_PROMPT, with [S1] refs, no bullet points, and 0-2 optional Markdown ## subheadings",
-                            "impact_markdown": "fixed final impact format: 这个对于[具体群体]的影响是： [短期] / [中期] / [长期], with [S1] refs",
+                            "body_markdown": "800-1500-character article analysis with [S1] refs and 0-2 optional ## headings",
+                            "impact_markdown": "这个对于[具体群体]的影响是： followed by [短期] / [中期] / [长期]",
                             "source_refs": ["S1", "S2"],
-                            "tts_text": "plain spoken Chinese text based only on title/body/impact",
                         }
                     ],
                 }
-            ]
-        },
-    }
-    response = requests.post(
-        "https://api.deepseek.com/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={
-            "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        NEWS_ANALYST_SYSTEM_PROMPT
-                        + "\n\n硬性技术规则：Return strict JSON only. Never output source URLs. "
-                        "Only cite source refs like [S1]. Write complete article-style analysis, not outlines. "
-                        "Each news item should usually be at least 800 Chinese characters. "
-                        "Do not write bullet points in the article body or impact text."
-                    ),
-                },
-                {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
-            ],
-            "temperature": 0.2,
-            "max_tokens": 8192,
-            "response_format": {"type": "json_object"},
-        },
-        timeout=120,
-    )
-    response.raise_for_status()
-    text = response.json()["choices"][0]["message"]["content"]
-    try:
-        payload = json.loads(extract_json(text))
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"DeepSeek returned invalid JSON after {len(text)} characters: {exc}") from exc
-    return normalize_section_reports(payload.get("sections", []), numbered_candidates, site, date_text)
+            },
+        }
+        response = requests.post(
+            "https://api.deepseek.com/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            NEWS_ANALYST_SYSTEM_PROMPT
+                            + "\n\n硬性技术规则：Return strict JSON only for the requested section. Never output source URLs. "
+                            "Only cite source refs like [S1]. Return at least two complete articles when evidence supports them. "
+                            "Each article must be 800-1500 Chinese characters. Do not write bullet points. "
+                            "The fixed impact block belongs once at the very end of each article."
+                        ),
+                    },
+                    {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+                ],
+                "temperature": 0.2,
+                "max_tokens": 8192,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=120,
+        )
+        response.raise_for_status()
+        choice = response.json()["choices"][0]
+        finish_reason = choice.get("finish_reason")
+        if finish_reason == "length":
+            raise RuntimeError(
+                f"DeepSeek output for section {topic_id} was truncated because finish_reason=length; "
+                "the JSON response was not parsed."
+            )
+        if finish_reason not in (None, "stop"):
+            raise RuntimeError(f"DeepSeek stopped unexpectedly for section {topic_id}: finish_reason={finish_reason}")
+
+        text = choice["message"]["content"]
+        try:
+            payload = json.loads(extract_json(text))
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"DeepSeek returned invalid JSON for section {topic_id} after {len(text)} characters: {exc}"
+            ) from exc
+
+        raw_section = payload.get("section")
+        raw_sections = payload.get("sections", []) if raw_section is None else [raw_section]
+        if not raw_sections:
+            log_quality_rejection(rejections, topic_id, "model_returned_no_section", candidate_count=len(topic_candidates))
+            continue
+        matching_sections = []
+        for returned_section in raw_sections:
+            returned_topic = str(returned_section.get("topic") or "").strip()
+            if returned_topic != topic_id:
+                log_quality_rejection(
+                    rejections,
+                    topic_id,
+                    "model_returned_wrong_section",
+                    returned_topic=returned_topic,
+                )
+                continue
+            matching_sections.append(returned_section)
+        if not matching_sections:
+            continue
+        reports.extend(
+            normalize_section_reports(matching_sections, numbered_candidates, site, date_text, rejections=rejections)
+        )
+
+    return reports
 
 
 def extract_json(text: str) -> str:
@@ -393,6 +458,26 @@ def limit_headings(markdown: str, max_headings: int = MAX_HEADINGS_PER_ITEM) -> 
     return "\n".join(lines).strip()
 
 
+def has_required_conclusion(body_markdown: str) -> bool:
+    paragraphs = [block.strip() for block in re.split(r"\n\s*\n", body_markdown) if block.strip()]
+    if not paragraphs:
+        return False
+    final_paragraph = re.sub(r"^#{2,3}\s+", "", paragraphs[-1]).strip()
+    return final_paragraph.startswith("最后，总的来说，")
+
+
+def has_valid_impact_block(body_markdown: str, impact_markdown: str) -> bool:
+    if IMPACT_PREFIX_RE.search(body_markdown):
+        return False
+    matches = list(IMPACT_PREFIX_RE.finditer(impact_markdown))
+    if len(matches) != 1 or impact_markdown[: matches[0].start()].strip():
+        return False
+    short_pos = impact_markdown.find("[短期]", matches[0].end())
+    middle_pos = impact_markdown.find("[中期]", short_pos + 1)
+    long_pos = impact_markdown.find("[长期]", middle_pos + 1)
+    return short_pos >= 0 and short_pos < middle_pos < long_pos
+
+
 def short_summary(text: str) -> str:
     plain = re.sub(r"\[S\d+\]", "", text)
     plain = re.sub(r"#+\s*", "", plain)
@@ -417,7 +502,15 @@ def citations_for_refs(refs: list[str], source_by_ref: dict[str, dict]) -> list[
     return citations
 
 
-def normalize_section_reports(raw_sections: list[dict], sources: list[dict], site: dict, date_text: str) -> list[dict]:
+def normalize_section_reports(
+    raw_sections: list[dict],
+    sources: list[dict],
+    site: dict,
+    date_text: str,
+    rejections: list[dict] | None = None,
+) -> list[dict]:
+    if rejections is None:
+        rejections = []
     source_by_ref = {source["ref"]: source for source in sources}
     allowed_topics = topic_ids(site)
     reports = []
@@ -425,34 +518,58 @@ def normalize_section_reports(raw_sections: list[dict], sources: list[dict], sit
     for raw_section in raw_sections:
         topic = str(raw_section.get("topic") or "").strip()
         if topic not in allowed_topics:
+            log_quality_rejection(rejections, topic or "unknown", "invalid_topic")
             continue
 
         news_items = []
-        for raw_item in raw_section.get("news_items") or []:
+        raw_items = raw_section.get("news_items") or []
+        for item_index, raw_item in enumerate(raw_items, start=1):
             title = str(raw_item.get("title") or "").strip()
             body_markdown = limit_headings(str(raw_item.get("body_markdown") or "").strip())
             impact_markdown = str(raw_item.get("impact_markdown") or "").strip()
+            rejection_details = {"item_index": item_index, "title": title[:120]}
             if not title or not body_markdown or not impact_markdown:
+                log_quality_rejection(rejections, topic, "missing_required_article_field", **rejection_details)
                 continue
             if has_bullet_markers(body_markdown) or has_bullet_markers(impact_markdown):
+                log_quality_rejection(rejections, topic, "bullet_points_not_allowed", **rejection_details)
                 continue
-            if has_dash_punctuation(body_markdown) or has_dash_punctuation(impact_markdown):
+            combined_article = "\n".join([title, body_markdown, impact_markdown])
+            if has_dash_punctuation(combined_article):
+                log_quality_rejection(rejections, topic, "dash_punctuation_not_allowed", **rejection_details)
                 continue
             item_heading_count = heading_count(body_markdown)
             item_char_count = analysis_char_count(body_markdown, impact_markdown)
-            if item_char_count < MIN_NEWS_CHARS:
+            if item_char_count < MIN_NEWS_CHARS or item_char_count > MAX_NEWS_CHARS:
+                log_quality_rejection(
+                    rejections,
+                    topic,
+                    "article_length_out_of_range",
+                    actual_chars=item_char_count,
+                    min_chars=MIN_NEWS_CHARS,
+                    max_chars=MAX_NEWS_CHARS,
+                    **rejection_details,
+                )
                 continue
-            combined_text = "\n".join([title, body_markdown, impact_markdown, str(raw_item.get("tts_text") or "")])
+            if not has_valid_impact_block(body_markdown, impact_markdown):
+                log_quality_rejection(rejections, topic, "invalid_or_misplaced_impact_block", **rejection_details)
+                continue
+            if not has_required_conclusion(body_markdown):
+                log_quality_rejection(rejections, topic, "missing_final_conclusion", **rejection_details)
+                continue
+            combined_text = "\n".join(
+                [title, str(raw_item.get("summary") or ""), body_markdown, impact_markdown]
+            )
             if has_source_url(combined_text):
+                log_quality_rejection(rejections, topic, "model_output_url_not_allowed", **rejection_details)
                 continue
 
             refs = normalize_source_refs(raw_item.get("source_refs"), combined_text, source_by_ref)
             if not refs:
+                log_quality_rejection(rejections, topic, "missing_valid_source_refs", **rejection_details)
                 continue
 
-            tts_text = str(raw_item.get("tts_text") or "").strip()
-            if not tts_text:
-                tts_text = "\n\n".join([title, body_markdown, "对我们的影响", impact_markdown])
+            tts_text = "\n\n".join([title, body_markdown, impact_markdown])
 
             news_items.append(
                 {
@@ -468,12 +585,18 @@ def normalize_section_reports(raw_sections: list[dict], sources: list[dict], sit
                     "tts_text": tts_text,
                     "analysis_chars": item_char_count,
                     "heading_count": item_heading_count,
+                    "audio_path": "",
                 }
             )
 
-        if not news_items:
-            continue
-        if len(news_items) == 1 and news_items[0]["analysis_chars"] < SINGLE_ITEM_SECTION_MIN_CHARS:
+        if len(news_items) < MIN_NEWS_ITEMS_PER_SECTION:
+            log_quality_rejection(
+                rejections,
+                topic,
+                "section_has_fewer_than_two_accepted_articles",
+                candidate_articles=len(raw_items),
+                accepted_articles=len(news_items),
+            )
             continue
 
         reports.append(
@@ -495,11 +618,147 @@ def total_news_count(sections: list[dict]) -> int:
     return sum(len(section.get("news_items", [])) for section in sections)
 
 
-def truncate_utf8(text: str, max_bytes: int) -> str:
-    encoded = text.encode("utf-8")
-    if len(encoded) <= max_bytes:
-        return text
-    return encoded[:max_bytes].decode("utf-8", errors="ignore").rstrip()
+def split_oversized_text(text: str, max_bytes: int) -> list[str]:
+    pieces = []
+    remaining = text
+    while remaining:
+        encoded = remaining.encode("utf-8")
+        if len(encoded) <= max_bytes:
+            pieces.append(remaining)
+            break
+        cut = encoded[:max_bytes].decode("utf-8", errors="ignore")
+        preferred = max(cut.rfind(mark) for mark in ("，", "、", ",", " "))
+        if preferred > 0:
+            cut = cut[: preferred + 1]
+        cut = cut.rstrip()
+        if not cut:
+            cut = encoded[:max_bytes].decode("utf-8", errors="ignore")
+        pieces.append(cut)
+        remaining = remaining[len(cut) :].lstrip()
+    return pieces
+
+
+def split_tts_text(text: str, max_bytes: int = TTS_CHUNK_MAX_BYTES) -> list[str]:
+    if max_bytes <= 0:
+        raise ValueError("max_bytes must be positive")
+    paragraphs = [paragraph.strip() for paragraph in re.split(r"\n\s*\n", text) if paragraph.strip()]
+    units = []
+    for paragraph in paragraphs:
+        if len(paragraph.encode("utf-8")) <= max_bytes:
+            units.append(paragraph)
+            continue
+        sentences = [part.strip() for part in re.split(r"(?<=[。！？!?；;])", paragraph) if part.strip()]
+        for sentence in sentences:
+            if len(sentence.encode("utf-8")) <= max_bytes:
+                units.append(sentence)
+            else:
+                units.extend(split_oversized_text(sentence, max_bytes))
+
+    chunks = []
+    current = ""
+    for unit in units:
+        candidate = f"{current}\n\n{unit}" if current else unit
+        if len(candidate.encode("utf-8")) <= max_bytes:
+            current = candidate
+        else:
+            if current:
+                chunks.append(current)
+            current = unit
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def speech_text(markdown: str) -> str:
+    text = re.sub(r"\[S\d+\]", "", markdown)
+    text = re.sub(r"^#{2,3}\s+", "", text, flags=re.MULTILINE)
+    return re.sub(r"[ \t]+", " ", text).strip()
+
+
+def mp3_duration_seconds(data: bytes) -> float:
+    bitrate_v1_l3 = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0]
+    bitrate_v2_l3 = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0]
+    sample_rates = [44100, 48000, 32000]
+    duration = 0.0
+    index = 0
+    while index + 4 <= len(data):
+        if data[index : index + 3] == b"ID3" and index + 10 <= len(data):
+            size_bytes = data[index + 6 : index + 10]
+            tag_size = sum((byte & 0x7F) << shift for byte, shift in zip(size_bytes, (21, 14, 7, 0)))
+            index += 10 + tag_size
+            continue
+        header = int.from_bytes(data[index : index + 4], "big")
+        if (header >> 21) & 0x7FF != 0x7FF:
+            index += 1
+            continue
+        version_id = (header >> 19) & 0x3
+        layer_id = (header >> 17) & 0x3
+        bitrate_index = (header >> 12) & 0xF
+        sample_index = (header >> 10) & 0x3
+        padding = (header >> 9) & 0x1
+        if version_id == 1 or layer_id != 1 or bitrate_index in (0, 15) or sample_index == 3:
+            index += 1
+            continue
+        sample_rate = sample_rates[sample_index]
+        if version_id == 2:
+            sample_rate //= 2
+        elif version_id == 0:
+            sample_rate //= 4
+        bitrate = (bitrate_v1_l3 if version_id == 3 else bitrate_v2_l3)[bitrate_index]
+        samples_per_frame = 1152 if version_id == 3 else 576
+        frame_length = ((144 if version_id == 3 else 72) * bitrate * 1000 // sample_rate) + padding
+        if frame_length <= 4 or index + frame_length > len(data):
+            index += 1
+            continue
+        duration += samples_per_frame / sample_rate
+        index += frame_length
+    return duration
+
+
+def concatenate_mp3_segments(segments: list[bytes]) -> tuple[bytes, str]:
+    combined = b"".join(segments)
+    segment_durations = [mp3_duration_seconds(segment) for segment in segments]
+    combined_duration = mp3_duration_seconds(combined)
+    expected_duration = sum(segment_durations)
+    direct_concat_valid = (
+        bool(segments)
+        and all(duration > 0 for duration in segment_durations)
+        and abs(combined_duration - expected_duration) <= max(0.25, expected_duration * 0.02)
+    )
+    if len(segments) <= 1 or direct_concat_valid:
+        return combined, "byte_concat"
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return combined, "byte_concat_unverified"
+    with tempfile.TemporaryDirectory(prefix="infogap-tts-") as temp_name:
+        temp_dir = Path(temp_name)
+        concat_lines = []
+        for index, segment in enumerate(segments):
+            segment_path = temp_dir / f"segment-{index:03d}.mp3"
+            segment_path.write_bytes(segment)
+            concat_lines.append(f"file '{segment_path.name}'")
+        (temp_dir / "concat.txt").write_text("\n".join(concat_lines), encoding="utf-8")
+        output_path = temp_dir / "combined.mp3"
+        subprocess.run(
+            [
+                ffmpeg,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                "concat.txt",
+                "-c",
+                "copy",
+                str(output_path),
+            ],
+            cwd=temp_dir,
+            check=True,
+        )
+        return output_path.read_bytes(), "ffmpeg_concat"
 
 
 def review_with_gemini(sections: list[dict]) -> None:
@@ -515,7 +774,7 @@ def review_with_gemini(sections: list[dict]) -> None:
             "titles should directly name the core issue or viewpoint; include multiple viewpoints where source-backed; "
             "use full paragraphs with at most two useful subheadings per news item; avoid heading-heavy outlines; "
             "avoid em dashes; end with a final impact paragraph using the fixed short/mid/long term format; "
-            "avoid weak single-item sections unless the single item is a deeper feature; "
+            "reject every section with fewer than two accepted articles; each article must be 800-1500 Chinese characters; "
             "and every specific money/date/eligibility/deadline claim must be supported by source refs."
         ),
         "sections": [
@@ -571,44 +830,51 @@ def synthesize_tts(sections: list[dict], date_text: str) -> None:
     for section in sections:
         if not section.get("news_items"):
             continue
-        filename = f"{section['topic']}.mp3"
-        output = audio_dir / filename
-        spoken_text = "\n\n".join(
-            [section["overview"]]
-            + [
-                "\n\n".join([item["title"], item["tts_text"]])
-                for item in section["news_items"]
-            ]
-        )
-        response = client.synthesize_speech(
-            input=texttospeech.SynthesisInput(text=truncate_utf8(spoken_text, 4800)),
-            voice=texttospeech.VoiceSelectionParams(language_code="cmn-CN", name=voice_name),
-            audio_config=texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3),
-        )
-        output.write_bytes(response.audio_content)
-        section["audio_path"] = f"audio/{date_text}/{filename}"
+        for item_index, item in enumerate(section["news_items"], start=1):
+            filename = f"{section['topic']}-{item_index:02d}-{item['id']}.mp3"
+            output = audio_dir / filename
+            spoken_text = speech_text(item["tts_text"])
+            text_chunks = split_tts_text(spoken_text)
+            if not text_chunks:
+                raise RuntimeError(f"TTS text is empty for article {item['id']} in section {section['topic']}")
+            audio_segments = []
+            for text_chunk in text_chunks:
+                response = client.synthesize_speech(
+                    input=texttospeech.SynthesisInput(text=text_chunk),
+                    voice=texttospeech.VoiceSelectionParams(language_code="cmn-CN", name=voice_name),
+                    audio_config=texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3),
+                )
+                audio_segments.append(response.audio_content)
+            combined_audio, merge_method = concatenate_mp3_segments(audio_segments)
+            output.write_bytes(combined_audio)
+            duration_seconds = round(mp3_duration_seconds(combined_audio), 2)
+            item["audio_path"] = f"audio/{date_text}/{filename}"
+            item["audio_segments"] = len(text_chunks)
+            item["audio_duration_seconds"] = duration_seconds
+            print(
+                json.dumps(
+                    {
+                        "tts": {
+                            "topic": section["topic"],
+                            "article_id": item["id"],
+                            "segments": len(text_chunks),
+                            "duration_seconds": duration_seconds,
+                            "audio_bytes": len(combined_audio),
+                            "merge_method": merge_method,
+                        }
+                    },
+                    ensure_ascii=False,
+                )
+            )
 
 
 def sections_for_render(site: dict, sections: list[dict], publication_date: str) -> list[dict]:
     by_topic = {section["topic"]: section for section in sections}
-    rendered = []
-    for topic in site.get("topics", []):
-        report = by_topic.get(topic["id"])
-        if report:
-            rendered.append(report)
-        else:
-            rendered.append(
-                {
-                    "topic": topic["id"],
-                    "topic_name": topic["name"],
-                    "topic_description": topic.get("description", ""),
-                    "publication_date": publication_date,
-                    "overview": "今天这个主题还没有通过事实核查的分析。",
-                    "news_items": [],
-                    "audio_path": "",
-                }
-            )
-    return rendered
+    return [
+        by_topic[topic["id"]]
+        for topic in site.get("topics", [])
+        if topic["id"] in by_topic and len(by_topic[topic["id"]].get("news_items", [])) >= MIN_NEWS_ITEMS_PER_SECTION
+    ]
 
 
 def render_site(site: dict, sections: list[dict], publication_date: str, preserve_audio: bool = False) -> None:
@@ -658,7 +924,13 @@ def render_site(site: dict, sections: list[dict], publication_date: str, preserv
     )
 
 
-def write_run_artifacts(date_text: str, candidates: list[dict], sections: list[dict], site: dict) -> None:
+def write_run_artifacts(
+    date_text: str,
+    candidates: list[dict],
+    sections: list[dict],
+    site: dict,
+    quality_rejections: list[dict] | None = None,
+) -> None:
     run_dir = RUNS / date_text
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "candidates.json").write_text(json.dumps(candidates, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -666,6 +938,9 @@ def write_run_artifacts(date_text: str, candidates: list[dict], sections: list[d
     (run_dir / "source-candidates.json").write_text(
         json.dumps(number_candidates(candidates, site), ensure_ascii=False, indent=2),
         encoding="utf-8",
+    )
+    (run_dir / "quality-rejections.json").write_text(
+        json.dumps(quality_rejections or [], ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
 
@@ -687,13 +962,14 @@ def main() -> int:
         print(json.dumps({"source_debug": collect_candidates.last_debug}, ensure_ascii=False, indent=2), file=sys.stderr)
         return 1
 
+    quality_rejections = []
     if args.use_llm:
-        sections = call_deepseek_for_sections(candidates, site, args.date)
+        sections = call_deepseek_for_sections(candidates, site, args.date, rejections=quality_rejections)
     else:
         sections = section_stub(site, args.date)
 
     if args.use_llm and candidates and not sections:
-        write_run_artifacts(args.date, candidates, sections, site)
+        write_run_artifacts(args.date, candidates, sections, site, quality_rejections)
         print(
             json.dumps(
                 {
@@ -717,7 +993,7 @@ def main() -> int:
         synthesize_tts(sections, args.date)
 
     render_site(site, sections, args.date, preserve_audio=args.tts)
-    write_run_artifacts(args.date, candidates, sections, site)
+    write_run_artifacts(args.date, candidates, sections, site, quality_rejections)
     print(
         json.dumps(
             {
