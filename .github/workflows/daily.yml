@@ -107,4 +107,3 @@ jobs:
       - name: Ping Healthchecks failure
         if: failure()
         run: python -c "import os, requests; url=os.getenv('HEALTHCHECKS_PING_URL'); requests.get(url + '/fail', timeout=20) if url else None"
-
