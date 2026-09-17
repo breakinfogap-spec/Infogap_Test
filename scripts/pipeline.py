@@ -1006,11 +1006,24 @@ def synthesize_tts(sections: list[dict], date_text: str) -> None:
 
 def sections_for_render(site: dict, sections: list[dict], publication_date: str) -> list[dict]:
     by_topic = {section["topic"]: section for section in sections}
-    return [
-        by_topic[topic["id"]]
-        for topic in site.get("topics", [])
-        if topic["id"] in by_topic and len(by_topic[topic["id"]].get("news_items", [])) >= MIN_NEWS_ITEMS_PER_SECTION
-    ]
+    rendered = []
+    for topic in site.get("topics", []):
+        report = by_topic.get(topic["id"])
+        if report and len(report.get("news_items", [])) >= MIN_NEWS_ITEMS_PER_SECTION:
+            rendered.append(report)
+        else:
+            rendered.append(
+                {
+                    "topic": topic["id"],
+                    "topic_name": topic["name"],
+                    "topic_description": topic.get("description", ""),
+                    "publication_date": publication_date,
+                    "overview": "今天这个主题还没有通过事实核查的分析。",
+                    "news_items": [],
+                    "audio_path": "",
+                }
+            )
+    return rendered
 
 
 def render_site(site: dict, sections: list[dict], publication_date: str, preserve_audio: bool = False) -> None:

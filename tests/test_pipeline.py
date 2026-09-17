@@ -301,13 +301,16 @@ class TtsTests(unittest.TestCase):
         self.assertEqual("byte_concat", method)
         self.assertGreater(pipeline.mp3_duration_seconds(combined), 0)
 
-    def test_missing_or_single_article_sections_are_not_rendered(self):
+    def test_all_topic_entries_are_rendered_with_empty_placeholders(self):
         sections = [
             {"topic": "finance", "news_items": [{"title": "only one"}]},
             {"topic": "technology", "news_items": [{"title": "one"}, {"title": "two"}]},
         ]
         rendered = pipeline.sections_for_render(site("finance", "technology", "living"), sections, "2026-09-16")
-        self.assertEqual(["technology"], [section["topic"] for section in rendered])
+        self.assertEqual(["finance", "technology", "living"], [section["topic"] for section in rendered])
+        self.assertEqual([], rendered[0]["news_items"])
+        self.assertEqual(2, len(rendered[1]["news_items"]))
+        self.assertEqual([], rendered[2]["news_items"])
 
     def test_synthesize_tts_creates_one_complete_file_per_article(self):
         frame = bytes.fromhex("fffb9000") + bytes(413)
