@@ -6,3 +6,11 @@ workers_dev = true
 [[r2_buckets]]
 binding = "NEWS_BUCKET"
 bucket_name = "daily-impact-news-content"
+
+# Create this with:
+#   npx wrangler d1 create infogap-analytics
+# Then replace REPLACE_WITH_D1_DATABASE_ID with the database_id returned by Wrangler.
+[[d1_databases]]
+binding = "ANALYTICS_DB"
+database_name = "infogap-analytics"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"

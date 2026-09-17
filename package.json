@@ -6,7 +6,9 @@
   "scripts": {
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
-    "check": "node --check src/worker.js"
+    "check": "node --check src/worker.js",
+    "test": "node --test tests/worker-analytics.test.mjs && npm run check",
+    "analytics": "python scripts/analytics_report.py"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

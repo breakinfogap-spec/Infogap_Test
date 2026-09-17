@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>隐私说明 · {{ site.site_title }}</title>
+  <link rel="stylesheet" href="/base.css">
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <p class="meta"><a href="/">首页</a></p>
+      <h1 class="brand">隐私说明</h1>
+      <p class="tagline">本站只做匿名访问统计，用来判断内容方向和本地读者需求。</p>
+    </div>
+  </header>
+  <main class="wrap privacy-page">
+    <section>
+      <h2>我们记录什么</h2>
+      <p>本站会记录匿名访问统计，包括访问时间、页面路径、来源网站的域名、设备类型，以及由 Cloudflare 根据访问网络推断出的大致城市、地区和国家。</p>
+      <p>这些数据只用于改进内容，例如判断有多少浏览来自大温地区，以及哪些主题和文章更受读者关注。</p>
+    </section>
+    <section>
+      <h2>我们不记录什么</h2>
+      <p>本站不存储 IP 地址，不存储完整 User-Agent，不设置 cookie，也不引入第三方广告或追踪脚本。</p>
+      <p>设备类型只会被粗略归类为 desktop、mobile 或 tablet。来源只保存网站域名，不保存完整 URL，避免保存可能带有个人信息的参数。</p>
+    </section>
+    <section>
+      <h2>Cloudflare Web Analytics</h2>
+      <p>本站可能同时使用 Cloudflare Web Analytics 查看基础流量、来源、设备和网页体验数据。它和本站自建的城市级统计互补，用途同样是改进内容。</p>
+    </section>
+    <section>
+      <h2>联系我们</h2>
+      <p>如果你对隐私说明或数据使用有疑问，可以联系：{{ site.contact_email or "break.infogap@gmail.com" }}</p>
+    </section>
+  </main>
+  <footer>
+    <div class="wrap">内容只保留最近 5 天。所有分析必须附真实来源。 · <a href="/privacy">隐私说明</a></div>
+  </footer>
+</body>
+</html>

@@ -1302,6 +1302,11 @@ def render_site(site: dict, sections: list[dict], publication_date: str, preserv
         encoding="utf-8",
     )
 
+    (GENERATED / "privacy.html").write_text(
+        env.get_template("privacy.html.j2").render(site=site),
+        encoding="utf-8",
+    )
+
     topics_dir = GENERATED / "topics"
     topics_dir.mkdir()
     for section in rendered_sections:
