@@ -26,7 +26,7 @@ jobs:
       NEWS_RETENTION_DAYS: "5"
       LLM_PRIMARY_MODEL: deepseek-chat
       LLM_REVIEW_MODEL: gemini-3.5-flash-lite
-      TTS_VOICE: cmn-CN-Wavenet-A
+      TTS_VOICE: cmn-CN-Chirp3-HD-Achernar
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || secrets.GOOGLE_AI_API }}
       GOOGLE_CLOUD_PROJECT_ID: ${{ secrets.GOOGLE_CLOUD_PROJECT_ID }}
@@ -107,3 +107,4 @@ jobs:
       - name: Ping Healthchecks failure
         if: failure()
         run: python -c "import os, requests; url=os.getenv('HEALTHCHECKS_PING_URL'); requests.get(url + '/fail', timeout=20) if url else None"
+

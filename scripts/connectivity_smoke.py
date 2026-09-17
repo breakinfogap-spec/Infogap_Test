@@ -79,7 +79,7 @@ def call_google_tts() -> None:
     from google.cloud import texttospeech
 
     client = texttospeech.TextToSpeechClient()
-    voice_name = os.getenv("TTS_VOICE", "cmn-CN-Wavenet-A")
+    voice_name = os.getenv("TTS_VOICE", "cmn-CN-Chirp3-HD-Achernar")
     response = client.synthesize_speech(
         input=texttospeech.SynthesisInput(text="信息差日报连通测试。"),
         voice=texttospeech.VoiceSelectionParams(language_code="cmn-CN", name=voice_name),
@@ -120,3 +120,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+

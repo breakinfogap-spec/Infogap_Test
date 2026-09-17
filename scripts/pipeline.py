@@ -1204,7 +1204,7 @@ def synthesize_tts(sections: list[dict], date_text: str) -> None:
     from google.cloud import texttospeech
 
     client = texttospeech.TextToSpeechClient()
-    voice_name = os.getenv("TTS_VOICE", "cmn-CN-Wavenet-A")
+    voice_name = os.getenv("TTS_VOICE", "cmn-CN-Chirp3-HD-Achernar")
     audio_dir = GENERATED / "audio" / date_text
     audio_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1463,3 +1463,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
