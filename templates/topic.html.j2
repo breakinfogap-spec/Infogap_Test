@@ -23,6 +23,18 @@
         {% if item.audio_path %}
         <audio controls preload="none" src="/{{ item.audio_path }}"></audio>
         {% endif %}
+        {% if item.cross_section_notice %}
+        <aside class="cross-section-note">
+          <p>{{ item.cross_section_notice }}</p>
+          {% if item.cross_section_links %}
+          <ul>
+            {% for link in item.cross_section_links %}
+            <li><a href="{{ link.href }}">{{ link.topic_name }}：{{ link.title }}</a></li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+        </aside>
+        {% endif %}
         <div class="article-body">
           {{ item.body_html | safe }}
         </div>

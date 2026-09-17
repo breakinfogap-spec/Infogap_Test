@@ -833,6 +833,58 @@ def total_news_count(sections: list[dict]) -> int:
     return sum(len(section.get("news_items", [])) for section in sections)
 
 
+def citation_urls(item: dict) -> set[str]:
+    return {
+        str(citation.get("url") or "").strip()
+        for citation in item.get("citations", [])
+        if str(citation.get("url") or "").startswith("http")
+    }
+
+
+def annotate_cross_section_duplicates(sections: list[dict], site: dict) -> None:
+    occurrences: dict[str, list[tuple[dict, dict]]] = {}
+    for section in sections:
+        for item in section.get("news_items", []):
+            for url in citation_urls(item):
+                occurrences.setdefault(url, []).append((section, item))
+
+    topic_order = {topic["id"]: index for index, topic in enumerate(site.get("topics", []))}
+    for section in sections:
+        for item in section.get("news_items", []):
+            related: dict[tuple[str, str], dict] = {}
+            for url in citation_urls(item):
+                for other_section, other_item in occurrences.get(url, []):
+                    if other_section.get("topic") == section.get("topic"):
+                        continue
+                    key = (other_section.get("topic", ""), other_item.get("id", ""))
+                    related[key] = {
+                        "topic": other_section.get("topic", ""),
+                        "topic_name": other_section.get("topic_name") or topic_name(other_section.get("topic", ""), site["topics"]),
+                        "title": other_item.get("title", ""),
+                        "href": f"/topics/{other_section.get('topic')}#{other_item.get('id')}",
+                    }
+
+            links = sorted(
+                related.values(),
+                key=lambda link: (topic_order.get(link["topic"], 999), link["title"]),
+            )
+            if not links:
+                item.pop("cross_section_notice", None)
+                item.pop("cross_section_links", None)
+                continue
+
+            topic_names = []
+            for link in links:
+                if link["topic_name"] not in topic_names:
+                    topic_names.append(link["topic_name"])
+            notice = f"这条新闻的影响面很广，我们在{'、'.join(topic_names)}板块也有分析。你可以跳过去看另一角度。"
+            item["cross_section_notice"] = notice
+            item["cross_section_links"] = links
+            tts_text = str(item.get("tts_text") or "").strip()
+            if tts_text and not tts_text.startswith(notice):
+                item["tts_text"] = f"{notice}\n\n{tts_text}"
+
+
 def merge_sections(existing: list[dict], updates: list[dict]) -> list[dict]:
     merged = {section["topic"]: section for section in existing}
     for section in updates:
@@ -1371,6 +1423,8 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
+
+    annotate_cross_section_duplicates(sections, site)
 
     if args.tts:
         synthesize_tts(sections, args.date)

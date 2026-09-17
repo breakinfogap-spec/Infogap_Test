@@ -198,6 +198,63 @@ class CandidateFallbackTests(unittest.TestCase):
             self.assertEqual(1, candidates[1]["fallback_age_days"])
 
 
+class CrossSectionDuplicateTests(unittest.TestCase):
+    def test_adds_notice_and_links_for_shared_citation_across_sections(self):
+        shared_url = "https://example.com/rate-news"
+        sections = [
+            {
+                "topic": "finance",
+                "topic_name": "金融",
+                "news_items": [
+                    {
+                        "id": "rate-finance",
+                        "title": "利率影响房贷",
+                        "tts_text": "金融正文",
+                        "citations": [{"url": shared_url}],
+                    }
+                ],
+            },
+            {
+                "topic": "living",
+                "topic_name": "民生与政策",
+                "news_items": [
+                    {
+                        "id": "rate-living",
+                        "title": "利率影响生活成本",
+                        "tts_text": "民生正文",
+                        "citations": [{"url": shared_url}],
+                    }
+                ],
+            },
+        ]
+        pipeline.annotate_cross_section_duplicates(sections, site("finance", "living"))
+        finance_item = sections[0]["news_items"][0]
+        living_item = sections[1]["news_items"][0]
+
+        self.assertIn("民生与政策板块也有分析", finance_item["cross_section_notice"])
+        self.assertEqual("/topics/living#rate-living", finance_item["cross_section_links"][0]["href"])
+        self.assertTrue(finance_item["tts_text"].startswith(finance_item["cross_section_notice"]))
+        self.assertIn("金融板块也有分析", living_item["cross_section_notice"])
+
+    def test_does_not_add_notice_for_unique_citation(self):
+        sections = [
+            {
+                "topic": "finance",
+                "topic_name": "金融",
+                "news_items": [
+                    {
+                        "id": "finance-only",
+                        "title": "只在金融出现",
+                        "tts_text": "正文",
+                        "citations": [{"url": "https://example.com/finance-only"}],
+                    }
+                ],
+            }
+        ]
+        pipeline.annotate_cross_section_duplicates(sections, site("finance"))
+        self.assertNotIn("cross_section_notice", sections[0]["news_items"][0])
+
+
 class DeepSeekTests(unittest.TestCase):
     def candidate(self, topic, ref):
         item = source(ref=ref, topic=topic)
