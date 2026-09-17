@@ -29,9 +29,37 @@ DASH_RE = re.compile(r"[—–]|--")
 LOCAL_SOURCE_IDS = {"global_bc", "cbc_bc", "bc_news", "vancouver_news", "vancouver_grants", "vancouver_consultations", "translink"}
 MIN_NEWS_CHARS = 800
 MAX_NEWS_CHARS = 1500
-MIN_NEWS_ITEMS_PER_SECTION = 2
+MIN_NEWS_ITEMS_PER_SECTION = 1
+MAX_NEWS_ITEMS_PER_SECTION = 3
 MAX_HEADINGS_PER_ITEM = 2
 TTS_CHUNK_MAX_BYTES = 4000
+FALLBACK_LOOKBACK_DAYS = 7
+SECTION_GENERATION_ATTEMPTS = 2
+POST_REVIEW_REPAIR_ATTEMPTS = 2
+FINANCE_PRIORITY_TERMS = (
+    "interest rate",
+    "rates",
+    "bank of canada",
+    "federal reserve",
+    "fed",
+    "inflation",
+    "cpi",
+    "consumer price",
+    "jobs",
+    "employment",
+    "unemployment",
+    "gdp",
+    "mortgage",
+    "rent",
+    "利率",
+    "加拿大央行",
+    "美联储",
+    "通胀",
+    "消费者价格",
+    "就业",
+    "失业",
+    "房贷",
+)
 IMPACT_PREFIX_RE = re.compile(r"这个对于[^\n]{1,80}的影响是[：:]")
 NEWS_ANALYST_SYSTEM_PROMPT = """# System Prompt: 新闻解读员
 
@@ -94,8 +122,14 @@ def entry_datetime(entry: dict) -> dt.datetime | None:
     return dt.datetime(*parsed[:6], tzinfo=dt.timezone.utc)
 
 
-def collect_candidates(source_registry: dict, date_text: str, timezone: str) -> list[dict]:
-    start, end = vancouver_window(date_text, timezone)
+def collect_candidates(
+    source_registry: dict,
+    date_text: str,
+    timezone: str,
+    lookback_days: int = 1,
+) -> list[dict]:
+    publication_start, end = vancouver_window(date_text, timezone)
+    start = publication_start - dt.timedelta(days=max(lookback_days - 1, 0))
     candidates: list[dict] = []
     source_debug: list[dict] = []
 
@@ -135,6 +169,8 @@ def collect_candidates(source_registry: dict, date_text: str, timezone: str) -> 
                 local_published = None
 
             debug["date_matches"] += 1
+            candidate_date = local_published.date().isoformat() if local_published else date_text
+            fallback_age_days = max((dt.date.fromisoformat(date_text) - dt.date.fromisoformat(candidate_date)).days, 0)
             candidates.append(
                 {
                     "source_id": source["id"],
@@ -145,6 +181,9 @@ def collect_candidates(source_registry: dict, date_text: str, timezone: str) -> 
                     "url": entry.get("link", "").strip(),
                     "published_at": local_published.isoformat() if local_published else None,
                     "summary": html.unescape(entry.get("summary", "")).strip(),
+                    "candidate_date": candidate_date,
+                    "fallback_age_days": fallback_age_days,
+                    "is_publication_date": fallback_age_days == 0,
                 }
             )
 
@@ -153,6 +192,73 @@ def collect_candidates(source_registry: dict, date_text: str, timezone: str) -> 
 
 
 collect_candidates.last_debug = []
+
+
+def date_text_days_ago(date_text: str, days: int) -> str:
+    return (dt.date.fromisoformat(date_text) - dt.timedelta(days=days)).isoformat()
+
+
+def used_source_urls(date_text: str, lookback_days: int = FALLBACK_LOOKBACK_DAYS) -> set[str]:
+    urls: set[str] = set()
+    for days_ago in range(1, lookback_days):
+        section_path = RUNS / date_text_days_ago(date_text, days_ago) / "sections.json"
+        if not section_path.exists():
+            continue
+        try:
+            sections = json.loads(section_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        for section in sections:
+            for item in section.get("news_items", []):
+                for citation in item.get("citations", []):
+                    url = str(citation.get("url") or "").strip()
+                    if url.startswith("http"):
+                        urls.add(url)
+    return urls
+
+
+def candidate_text(candidate: dict) -> str:
+    return " ".join(
+        str(candidate.get(field) or "")
+        for field in ("source_name", "title", "summary", "geography", "source_id")
+    ).lower()
+
+
+def candidate_priority(candidate: dict, topic: str = "") -> tuple[int, int, int, str]:
+    text = candidate_text(candidate)
+    fallback_age = int(candidate.get("fallback_age_days") or 0)
+    previously_used = 1 if candidate.get("previously_used") else 0
+    finance_priority = 0
+    if topic == "finance" or "finance" in candidate.get("topic_candidates", []):
+        finance_priority = -1 if any(term in text for term in FINANCE_PRIORITY_TERMS) else 0
+    return (previously_used, fallback_age, finance_priority, str(candidate.get("published_at") or ""))
+
+
+def collect_candidates_for_publication(
+    source_registry: dict,
+    date_text: str,
+    timezone: str,
+    lookback_days: int = FALLBACK_LOOKBACK_DAYS,
+) -> list[dict]:
+    used_urls = used_source_urls(date_text, lookback_days)
+    merged: list[dict] = []
+    seen_urls: set[str] = set()
+
+    window_candidates = collect_candidates(source_registry, date_text, timezone, lookback_days=lookback_days)
+    for candidate in window_candidates:
+        url = str(candidate.get("url") or "").strip()
+        if not url.startswith("http") or url in seen_urls:
+            continue
+        fallback_age_days = int(candidate.get("fallback_age_days") or 0)
+        is_previously_used = url in used_urls
+        if fallback_age_days > 0 and is_previously_used:
+            continue
+        seen_urls.add(url)
+        enriched = dict(candidate)
+        enriched["previously_used"] = is_previously_used
+        merged.append(enriched)
+
+    return sorted(merged, key=lambda candidate: candidate_priority(candidate))
 
 
 def section_stub(site: dict, publication_date: str) -> list[dict]:
@@ -240,6 +346,10 @@ def number_candidates(candidates: list[dict], site: dict) -> list[dict]:
                 "url": url,
                 "published_at": candidate.get("published_at"),
                 "summary": str(candidate.get("summary") or "").strip(),
+                "candidate_date": candidate.get("candidate_date"),
+                "fallback_age_days": candidate.get("fallback_age_days", 0),
+                "is_publication_date": candidate.get("is_publication_date", True),
+                "previously_used": candidate.get("previously_used", False),
             }
         )
         if len(numbered) >= 80:
@@ -257,13 +367,16 @@ def candidates_for_prompt(candidates: list[dict]) -> list[dict]:
             "title": item["title"],
             "published_at": item["published_at"],
             "summary": item["summary"],
+            "candidate_date": item.get("candidate_date"),
+            "fallback_age_days": item.get("fallback_age_days", 0),
         }
         for item in candidates
     ]
 
 
 def candidates_for_section(candidates: list[dict], topic: str) -> list[dict]:
-    return [candidate for candidate in candidates if topic in candidate.get("topic_candidates", [])]
+    topic_candidates = [candidate for candidate in candidates if topic in candidate.get("topic_candidates", [])]
+    return sorted(topic_candidates, key=lambda candidate: candidate_priority(candidate, topic))
 
 
 def log_quality_rejection(rejections: list[dict], topic: str, reason: str, **details: object) -> None:
@@ -272,11 +385,23 @@ def log_quality_rejection(rejections: list[dict], topic: str, reason: str, **det
     print(json.dumps({"quality_gate_rejection": entry}, ensure_ascii=False), file=sys.stderr)
 
 
+def rejection_feedback(topic_id: str, rejections: list[dict], limit: int = 8) -> list[dict]:
+    topic_rejections = [item for item in rejections if item.get("topic") == topic_id]
+    return topic_rejections[-limit:]
+
+
 def call_deepseek_for_sections(
-    candidates: list[dict], site: dict, date_text: str, rejections: list[dict] | None = None
+    candidates: list[dict],
+    site: dict,
+    date_text: str,
+    rejections: list[dict] | None = None,
+    target_topics: set[str] | None = None,
+    feedback_by_topic: dict[str, list[dict]] | None = None,
 ) -> list[dict]:
     if rejections is None:
         rejections = []
+    if feedback_by_topic is None:
+        feedback_by_topic = {}
     api_key = os.environ["DEEPSEEK_API_KEY"]
     model = os.getenv("LLM_PRIMARY_MODEL", "deepseek-chat")
     numbered_candidates = number_candidates(candidates, site)
@@ -284,6 +409,8 @@ def call_deepseek_for_sections(
 
     for topic in site["topics"]:
         topic_id = topic["id"]
+        if target_topics is not None and topic_id not in target_topics:
+            continue
         topic_candidates = candidates_for_section(numbered_candidates, topic_id)
         if len(topic_candidates) < MIN_NEWS_ITEMS_PER_SECTION:
             log_quality_rejection(
@@ -295,122 +422,153 @@ def call_deepseek_for_sections(
             )
             continue
 
-        prompt = {
-            "date": date_text,
-            "audience": "ordinary Canadians; Vancouver local readers have a dedicated section",
-            "target_section": topic,
-            "editorial_rules": site["editorial_rules"],
-            "source_rules": [
-                "Sources are identified only by refs like [S1]. You must not output URLs.",
-                "Every specific claim about money, dates, eligibility, deadlines, quotes, or opposing views must cite one or more source refs.",
-                "Use only source_refs that appear in the provided candidates.",
-                "Write only the requested target_section. Do not return other sections.",
-                "The returned section.topic must repeat target_section.id exactly in English. Do not translate the topic id.",
-            ],
-            "writing_template": {
-                "section_overview": "今天有 X 条新闻会对我们的生活造成影响。",
-                "section_composition": "Return 2-3 distinct, evidence-backed news analyses. A section with fewer than two accepted articles will not be published.",
-                "per_news_item": [
-                    "A clear, forceful title that directly names the core issue or viewpoint.",
-                    "Write 800-1500 Chinese characters across body_markdown and impact_markdown.",
-                    "Use full readable Chinese paragraphs, never bullet points.",
-                    "Start by saying what happened in one sentence and directly explain what it means.",
-                    "Use 0-2 optional Markdown ## subheadings only for genuinely distinct questions.",
-                    "The final paragraph of body_markdown must begin with 最后，总的来说，.",
-                    "Put the impact block in impact_markdown only, exactly once, and nowhere in body_markdown.",
-                    "impact_markdown must start with 这个对于[具体群体]的影响是： and contain [短期], [中期], and [长期] in that order.",
-                    "Nothing may follow the impact block except source refs attached to its claims.",
-                    "Do not use em dashes, Chinese dash punctuation, bullet points, or URLs.",
+        accepted_reports: list[dict] = []
+        attempt_feedback = list(feedback_by_topic.get(topic_id, []))
+        for attempt in range(1, SECTION_GENERATION_ATTEMPTS + 1):
+            prompt = {
+                "date": date_text,
+                "audience": "ordinary Canadians; Vancouver local readers have a dedicated section",
+                "target_section": topic,
+                "section_rules": {
+                    "min_news_items": MIN_NEWS_ITEMS_PER_SECTION,
+                    "max_news_items": MAX_NEWS_ITEMS_PER_SECTION,
+                    "fallback_window": f"Use publication-date news first. If there is not enough strong material, use unused candidates from the previous {FALLBACK_LOOKBACK_DAYS} days.",
+                    "finance_priority": "For finance, prioritize Bank of Canada, Federal Reserve, interest rates, inflation/CPI, jobs, unemployment, mortgages, rent, and household cash flow.",
+                    "repair_requirement": "If this is a retry, fix the listed quality failures instead of returning a weak or empty section.",
+                },
+                "previous_quality_failures_to_fix": attempt_feedback + rejection_feedback(topic_id, rejections),
+                "editorial_rules": site["editorial_rules"],
+                "source_rules": [
+                    "Sources are identified only by refs like [S1]. You must not output URLs.",
+                    "Every specific claim about money, dates, eligibility, deadlines, quotes, or opposing views must cite one or more source refs.",
+                    "Use only source_refs that appear in the provided candidates.",
+                    "Write only the requested target_section. Do not return other sections.",
+                    "The returned section.topic must repeat target_section.id exactly in English. Do not translate the topic id.",
                 ],
-            },
-            "candidates": candidates_for_prompt(topic_candidates),
-            "required_json_shape": {
-                "section": {
-                    "topic": topic_id,
-                    "overview": "今天有 X 条新闻会对我们的生活造成影响。",
-                    "news_items": [
-                        {
-                            "title": "clear Chinese headline",
-                            "summary": "one sentence",
-                            "body_markdown": "800-1500-character article analysis with [S1] refs and 0-2 optional ## headings",
-                            "impact_markdown": "这个对于[具体群体]的影响是： followed by [短期] / [中期] / [长期]",
-                            "source_refs": ["S1", "S2"],
-                        }
+                "writing_template": {
+                    "section_overview": "今天有 X 条新闻会对我们的生活造成影响。",
+                    "section_composition": "Return 1-3 distinct, evidence-backed news analyses. At least one accepted article is required for publication.",
+                    "per_news_item": [
+                        "A clear, forceful title that directly names the core issue or viewpoint.",
+                        "Write 800-1500 Chinese characters across body_markdown and impact_markdown.",
+                        "Use full readable Chinese paragraphs, never bullet points.",
+                        "Start by saying what happened in one sentence and directly explain what it means.",
+                        "Use 0-2 optional Markdown ## subheadings only for genuinely distinct questions.",
+                        "The final paragraph of body_markdown must begin with 最后，总的来说，.",
+                        "Put the impact block in impact_markdown only, exactly once, and nowhere in body_markdown.",
+                        "impact_markdown must start with 这个对于[具体群体]的影响是： and contain [短期], [中期], and [长期] in that order.",
+                        "Nothing may follow the impact block except source refs attached to its claims.",
+                        "Do not use em dashes, Chinese dash punctuation, bullet points, or URLs.",
                     ],
-                }
-            },
-        }
-        response = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={
-                "model": model,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            NEWS_ANALYST_SYSTEM_PROMPT
-                            + "\n\n硬性技术规则：Return strict JSON only for the requested section. Never output source URLs. "
-                            "Only cite source refs like [S1]. Return at least two complete articles when evidence supports them. "
-                            "Each article must be 800-1500 Chinese characters. Do not write bullet points. "
-                            "The fixed impact block belongs once at the very end of each article."
-                        ),
-                    },
-                    {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
-                ],
-                "temperature": 0.2,
-                "max_tokens": 8192,
-                "response_format": {"type": "json_object"},
-            },
-            timeout=120,
-        )
-        response.raise_for_status()
-        choice = response.json()["choices"][0]
-        finish_reason = choice.get("finish_reason")
-        if finish_reason == "length":
-            raise RuntimeError(
-                f"DeepSeek output for section {topic_id} was truncated because finish_reason=length; "
-                "the JSON response was not parsed."
+                },
+                "candidates": candidates_for_prompt(topic_candidates),
+                "required_json_shape": {
+                    "section": {
+                        "topic": topic_id,
+                        "overview": "今天有 X 条新闻会对我们的生活造成影响。",
+                        "news_items": [
+                            {
+                                "title": "clear Chinese headline",
+                                "summary": "one sentence",
+                                "body_markdown": "800-1500-character article analysis with [S1] refs and 0-2 optional ## headings",
+                                "impact_markdown": "这个对于[具体群体]的影响是： followed by [短期] / [中期] / [长期]",
+                                "source_refs": ["S1", "S2"],
+                            }
+                        ],
+                    }
+                },
+            }
+            response = requests.post(
+                "https://api.deepseek.com/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                NEWS_ANALYST_SYSTEM_PROMPT
+                                + "\n\n硬性技术规则：Return strict JSON only for the requested section. Never output source URLs. "
+                                "Only cite source refs like [S1]. Return 1-3 complete articles. "
+                                "At least one article must pass the quality gates. "
+                                "Each article must be 800-1500 Chinese characters. Do not write bullet points. "
+                                "The fixed impact block belongs once at the very end of each article. "
+                                "If prior quality failures are supplied, rewrite to fix them."
+                            ),
+                        },
+                        {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+                    ],
+                    "temperature": 0.2 if attempt == 1 else 0.1,
+                    "max_tokens": 8192,
+                    "response_format": {"type": "json_object"},
+                },
+                timeout=120,
             )
-        if finish_reason not in (None, "stop"):
-            raise RuntimeError(f"DeepSeek stopped unexpectedly for section {topic_id}: finish_reason={finish_reason}")
+            response.raise_for_status()
+            choice = response.json()["choices"][0]
+            finish_reason = choice.get("finish_reason")
+            if finish_reason == "length":
+                raise RuntimeError(
+                    f"DeepSeek output for section {topic_id} was truncated because finish_reason=length; "
+                    "the JSON response was not parsed."
+                )
+            if finish_reason not in (None, "stop"):
+                raise RuntimeError(f"DeepSeek stopped unexpectedly for section {topic_id}: finish_reason={finish_reason}")
 
-        text = choice["message"]["content"]
-        try:
-            payload = json.loads(extract_json(text))
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(
-                f"DeepSeek returned invalid JSON for section {topic_id} after {len(text)} characters: {exc}"
-            ) from exc
+            text = choice["message"]["content"]
+            try:
+                payload = json.loads(extract_json(text))
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    f"DeepSeek returned invalid JSON for section {topic_id} after {len(text)} characters: {exc}"
+                ) from exc
 
-        raw_section = payload.get("section")
-        raw_sections = payload.get("sections", []) if raw_section is None else [raw_section]
-        if not raw_sections:
-            log_quality_rejection(rejections, topic_id, "model_returned_no_section", candidate_count=len(topic_candidates))
-            continue
-        matching_sections = []
-        for returned_section in raw_sections:
-            returned_topic = str(returned_section.get("topic") or "").strip()
-            normalized_topic = normalize_topic_id(returned_topic, site)
-            if normalized_topic != topic_id:
+            raw_section = payload.get("section")
+            raw_sections = payload.get("sections", []) if raw_section is None else [raw_section]
+            if not raw_sections:
                 log_quality_rejection(
                     rejections,
                     topic_id,
-                    "model_returned_wrong_section",
-                    returned_topic=returned_topic,
+                    "model_returned_no_section",
+                    candidate_count=len(topic_candidates),
+                    attempt=attempt,
                 )
+                attempt_feedback = rejection_feedback(topic_id, rejections)
                 continue
-            normalized_section = dict(returned_section)
-            normalized_section["topic"] = topic_id
-            matching_sections.append(normalized_section)
-        if not matching_sections:
-            continue
-        reports.extend(
-            normalize_section_reports(matching_sections, numbered_candidates, site, date_text, rejections=rejections)
-        )
+            matching_sections = []
+            for returned_section in raw_sections:
+                returned_topic = str(returned_section.get("topic") or "").strip()
+                normalized_topic = normalize_topic_id(returned_topic, site)
+                if normalized_topic != topic_id:
+                    log_quality_rejection(
+                        rejections,
+                        topic_id,
+                        "model_returned_wrong_section",
+                        returned_topic=returned_topic,
+                        attempt=attempt,
+                    )
+                    continue
+                normalized_section = dict(returned_section)
+                normalized_section["topic"] = topic_id
+                matching_sections.append(normalized_section)
+            if not matching_sections:
+                attempt_feedback = rejection_feedback(topic_id, rejections)
+                continue
+            before_count = len(rejections)
+            accepted_reports = normalize_section_reports(
+                matching_sections,
+                numbered_candidates,
+                site,
+                date_text,
+                rejections=rejections,
+            )
+            if accepted_reports:
+                break
+            attempt_feedback = rejections[before_count:] or rejection_feedback(topic_id, rejections)
+
+        reports.extend(accepted_reports)
 
     return reports
-
 
 def extract_json(text: str) -> str:
     text = text.strip()
@@ -648,11 +806,13 @@ def normalize_section_reports(
             log_quality_rejection(
                 rejections,
                 topic,
-                "section_has_fewer_than_two_accepted_articles",
+                "section_has_too_few_accepted_articles",
                 candidate_articles=len(raw_items),
                 accepted_articles=len(news_items),
+                required_articles=MIN_NEWS_ITEMS_PER_SECTION,
             )
             continue
+        news_items = news_items[:MAX_NEWS_ITEMS_PER_SECTION]
 
         reports.append(
             {
@@ -671,6 +831,29 @@ def normalize_section_reports(
 
 def total_news_count(sections: list[dict]) -> int:
     return sum(len(section.get("news_items", [])) for section in sections)
+
+
+def merge_sections(existing: list[dict], updates: list[dict]) -> list[dict]:
+    merged = {section["topic"]: section for section in existing}
+    for section in updates:
+        merged[section["topic"]] = section
+    return list(merged.values())
+
+
+def missing_section_topics(site: dict, sections: list[dict]) -> set[str]:
+    present = {
+        section["topic"]
+        for section in sections
+        if len(section.get("news_items", [])) >= MIN_NEWS_ITEMS_PER_SECTION
+    }
+    return {topic["id"] for topic in site.get("topics", [])} - present
+
+
+def feedback_by_topic_from_rejections(rejections: list[dict], topics: set[str]) -> dict[str, list[dict]]:
+    return {
+        topic: [item for item in rejections if item.get("topic") == topic][-10:]
+        for topic in topics
+    }
 
 
 def split_oversized_text(text: str, max_bytes: int) -> list[str]:
@@ -931,14 +1114,15 @@ def review_with_gemini(
             log_quality_rejection(
                 rejections,
                 section["topic"],
-                "section_has_fewer_than_two_articles_after_gemini",
+                "section_has_too_few_articles_after_gemini",
                 articles_before_review=len(section["news_items"]),
                 accepted_articles=len(accepted_items),
+                required_articles=MIN_NEWS_ITEMS_PER_SECTION,
             )
             continue
         accepted_section = dict(section)
-        accepted_section["news_items"] = accepted_items
-        accepted_section["overview"] = f"今天有 {len(accepted_items)} 条新闻会对我们的生活造成影响。"
+        accepted_section["news_items"] = accepted_items[:MAX_NEWS_ITEMS_PER_SECTION]
+        accepted_section["overview"] = f"今天有 {len(accepted_section['news_items'])} 条新闻会对我们的生活造成影响。"
         accepted_sections.append(accepted_section)
 
     return accepted_sections
@@ -1104,7 +1288,7 @@ def main() -> int:
 
     site = load_json(ROOT / "config" / "site.json")
     source_registry = load_json(ROOT / "config" / "source-registry.json")
-    candidates = collect_candidates(source_registry, args.date, site["timezone"])
+    candidates = collect_candidates_for_publication(source_registry, args.date, site["timezone"])
 
     if not candidates and not args.allow_empty:
         print("No enabled source produced candidates. Enable verified feeds before the real run.", file=sys.stderr)
@@ -1114,10 +1298,22 @@ def main() -> int:
     quality_rejections = []
     if args.use_llm:
         sections = call_deepseek_for_sections(candidates, site, args.date, rejections=quality_rejections)
+        missing_topics = missing_section_topics(site, sections)
+        if missing_topics:
+            repair_sections = call_deepseek_for_sections(
+                candidates,
+                site,
+                args.date,
+                rejections=quality_rejections,
+                target_topics=missing_topics,
+                feedback_by_topic=feedback_by_topic_from_rejections(quality_rejections, missing_topics),
+            )
+            sections = merge_sections(sections, repair_sections)
     else:
         sections = section_stub(site, args.date)
 
-    if args.use_llm and candidates and not sections:
+    if args.use_llm and candidates and missing_section_topics(site, sections):
+        missing_topics = sorted(missing_section_topics(site, sections))
         write_run_artifacts(args.date, candidates, sections, site, quality_rejections)
         print(
             json.dumps(
@@ -1125,9 +1321,10 @@ def main() -> int:
                     "ok": False,
                     "date": args.date,
                     "candidates": len(candidates),
-                    "sections": 0,
-                    "news_items": 0,
-                    "error": "LLM output did not pass section report quality gates.",
+                    "sections": len(sections),
+                    "news_items": total_news_count(sections),
+                    "missing_sections": missing_topics,
+                    "error": "Some sections could not be repaired to at least one quality-gated article.",
                 },
                 ensure_ascii=False,
             ),
@@ -1136,8 +1333,27 @@ def main() -> int:
         return 1
 
     if args.review:
-        sections = review_with_gemini(sections, candidates, site, quality_rejections)
-        if candidates and not sections:
+        reviewed_sections = review_with_gemini(sections, candidates, site, quality_rejections)
+        missing_topics = missing_section_topics(site, reviewed_sections)
+        repair_attempt = 0
+        while missing_topics and repair_attempt < POST_REVIEW_REPAIR_ATTEMPTS:
+            repair_attempt += 1
+            repair_sections = call_deepseek_for_sections(
+                candidates,
+                site,
+                args.date,
+                rejections=quality_rejections,
+                target_topics=missing_topics,
+                feedback_by_topic=feedback_by_topic_from_rejections(quality_rejections, missing_topics),
+            )
+            if not repair_sections:
+                break
+            reviewed_repair_sections = review_with_gemini(repair_sections, candidates, site, quality_rejections)
+            reviewed_sections = merge_sections(reviewed_sections, reviewed_repair_sections)
+            missing_topics = missing_section_topics(site, reviewed_sections)
+        sections = reviewed_sections
+        if args.use_llm and candidates and missing_section_topics(site, sections):
+            missing_topics = sorted(missing_section_topics(site, sections))
             write_run_artifacts(args.date, candidates, sections, site, quality_rejections)
             print(
                 json.dumps(
@@ -1145,9 +1361,10 @@ def main() -> int:
                         "ok": False,
                         "date": args.date,
                         "candidates": len(candidates),
-                        "sections": 0,
-                        "news_items": 0,
-                        "error": "No section retained at least two articles after Gemini evidence review.",
+                        "sections": len(sections),
+                        "news_items": total_news_count(sections),
+                        "missing_sections": missing_topics,
+                        "error": "Some sections still lacked one evidence-approved article after repair attempts.",
                     },
                     ensure_ascii=False,
                 ),

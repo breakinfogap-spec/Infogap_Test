@@ -77,7 +77,7 @@ class QualityGateTests(unittest.TestCase):
             self.assertLessEqual(item["analysis_chars"], 1500)
         self.assertEqual([], rejections)
 
-    def test_logs_actual_length_and_drops_section(self):
+    def test_logs_actual_length_and_keeps_one_valid_article(self):
         short = valid_item("短稿")
         short["body_markdown"] = "内容太短。[S1]\n\n最后，总的来说，这是一篇短稿。[S1]"
         rejections = []
@@ -88,12 +88,10 @@ class QualityGateTests(unittest.TestCase):
             "2026-09-16",
             rejections,
         )
-        self.assertEqual([], reports)
+        self.assertEqual(1, len(reports))
+        self.assertEqual(1, len(reports[0]["news_items"]))
         length_rejection = next(item for item in rejections if item["reason"] == "article_length_out_of_range")
         self.assertIn("actual_chars", length_rejection)
-        self.assertTrue(
-            any(item["reason"] == "section_has_fewer_than_two_accepted_articles" for item in rejections)
-        )
 
     def test_moves_trailing_impact_block_out_of_body(self):
         moved = valid_item("自动纠正影响块")
@@ -129,6 +127,76 @@ class QualityGateTests(unittest.TestCase):
         )
         self.assertTrue(any(item["reason"] == "invalid_or_misplaced_impact_block" for item in rejections))
 
+    def test_limits_section_to_three_articles(self):
+        reports = pipeline.normalize_section_reports(
+            [
+                {
+                    "topic": "technology",
+                    "news_items": [valid_item(f"文章{index}") for index in range(1, 5)],
+                }
+            ],
+            [source()],
+            site("technology"),
+            "2026-09-16",
+            [],
+        )
+        self.assertEqual(1, len(reports))
+        self.assertEqual(3, len(reports[0]["news_items"]))
+
+
+class CandidateFallbackTests(unittest.TestCase):
+    def test_weekly_fallback_skips_previously_used_old_urls(self):
+        with tempfile.TemporaryDirectory() as temp_name:
+            used_run_dir = Path(temp_name) / "2026-09-15"
+            used_run_dir.mkdir(parents=True)
+            used_url = "https://example.com/used"
+            (used_run_dir / "sections.json").write_text(
+                __import__("json").dumps(
+                    [
+                        {
+                            "news_items": [
+                                {"citations": [{"url": used_url}]}
+                            ]
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            window_candidates = [
+                {
+                    "url": "https://example.com/today",
+                    "topic_candidates": ["finance"],
+                    "title": "today",
+                    "fallback_age_days": 0,
+                },
+                {
+                    "url": used_url,
+                    "topic_candidates": ["finance"],
+                    "title": "used",
+                    "fallback_age_days": 1,
+                },
+                {
+                    "url": "https://example.com/unused",
+                    "topic_candidates": ["finance"],
+                    "title": "unused",
+                    "fallback_age_days": 1,
+                },
+            ]
+
+            def fake_collect(_registry, date_text, _timezone, lookback_days=1):
+                self.assertEqual("2026-09-16", date_text)
+                self.assertEqual(2, lookback_days)
+                return [dict(item) for item in window_candidates]
+
+            with patch.object(pipeline, "RUNS", Path(temp_name)):
+                with patch.object(pipeline, "collect_candidates", side_effect=fake_collect):
+                    candidates = pipeline.collect_candidates_for_publication({}, "2026-09-16", "America/Vancouver", 2)
+            self.assertEqual(
+                ["https://example.com/today", "https://example.com/unused"],
+                [candidate["url"] for candidate in candidates],
+            )
+            self.assertEqual(1, candidates[1]["fallback_age_days"])
+
 
 class DeepSeekTests(unittest.TestCase):
     def candidate(self, topic, ref):
@@ -144,7 +212,7 @@ class DeepSeekTests(unittest.TestCase):
             prompt = __import__("json").loads(json["messages"][1]["content"])
             topic = prompt["target_section"]["id"]
             calls.append(topic)
-            content = __import__("json").dumps({"section": {"topic": topic, "news_items": []}})
+            content = __import__("json").dumps({"section": {"topic": topic, "news_items": [valid_item(f"{topic} article")]}})
             return FakeResponse({"choices": [{"finish_reason": "stop", "message": {"content": content}}]})
 
         with patch.object(pipeline.requests, "post", side_effect=fake_post):
@@ -258,7 +326,7 @@ class GeminiReviewTests(unittest.TestCase):
             self.assertNotIn(forbidden, task)
 
     @patch.dict(os.environ, {"GEMINI_API_KEY": "test"})
-    def test_drops_section_below_two_articles_without_raising(self):
+    def test_keeps_section_with_one_article_after_gemini(self):
         section = self.make_section(2)
         article_ids = [item["id"] for item in section["news_items"]]
         reviews = [
@@ -279,10 +347,9 @@ class GeminiReviewTests(unittest.TestCase):
             accepted = pipeline.review_with_gemini(
                 [section], [self.candidate()], site("technology"), rejections
             )
-        self.assertEqual([], accepted)
-        self.assertTrue(
-            any(item["reason"] == "section_has_fewer_than_two_articles_after_gemini" for item in rejections)
-        )
+        self.assertEqual(1, len(accepted))
+        self.assertEqual(1, len(accepted[0]["news_items"]))
+        self.assertTrue(any(item["reason"] == "gemini_evidence_review_rejected" for item in rejections))
 
 
 class TtsTests(unittest.TestCase):
@@ -308,7 +375,7 @@ class TtsTests(unittest.TestCase):
         ]
         rendered = pipeline.sections_for_render(site("finance", "technology", "living"), sections, "2026-09-16")
         self.assertEqual(["finance", "technology", "living"], [section["topic"] for section in rendered])
-        self.assertEqual([], rendered[0]["news_items"])
+        self.assertEqual(1, len(rendered[0]["news_items"]))
         self.assertEqual(2, len(rendered[1]["news_items"]))
         self.assertEqual([], rendered[2]["news_items"])
 

@@ -39,6 +39,13 @@ jobs:
       HEALTHCHECKS_PING_URL: ${{ secrets.HEALTHCHECKS_PING_URL }}
     steps:
       - uses: actions/checkout@v4
+      - name: Restore run history
+        uses: actions/cache@v4
+        with:
+          path: runs
+          key: infogap-runs-${{ github.run_id }}
+          restore-keys: |
+            infogap-runs-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
