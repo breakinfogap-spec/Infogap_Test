@@ -95,9 +95,30 @@ class QualityGateTests(unittest.TestCase):
             any(item["reason"] == "section_has_fewer_than_two_accepted_articles" for item in rejections)
         )
 
-    def test_rejects_impact_block_inside_body(self):
+    def test_moves_trailing_impact_block_out_of_body(self):
+        moved = valid_item("自动纠正影响块")
+        moved["body_markdown"] += "\n\n" + moved["impact_markdown"]
+        moved["impact_markdown"] = ""
+        reports = pipeline.normalize_section_reports(
+            [{"topic": "technology", "news_items": [moved, valid_item("另一篇")]}],
+            [source()],
+            site("technology"),
+            "2026-09-16",
+            [],
+        )
+        self.assertEqual(1, len(reports))
+        corrected = reports[0]["news_items"][0]
+        self.assertNotIn("这个对于", corrected["body_markdown"])
+        self.assertTrue(corrected["impact_markdown"].startswith("这个对于"))
+
+    def test_rejects_impact_block_in_middle_of_body(self):
         bad = valid_item("影响块位置错误")
-        bad["body_markdown"] += "\n\n这个对于读者的影响是：[短期]错误 [中期]错误 [长期]错误"
+        conclusion = "最后，总的来说，这项变化值得持续关注，也需要根据公开信息作出理性判断。[S1]"
+        bad["body_markdown"] = bad["body_markdown"].removesuffix(conclusion).rstrip()
+        bad["body_markdown"] += (
+            "\n\n这个对于读者的影响是：[短期]错误 [中期]错误 [长期]错误"
+            "\n\n" + conclusion
+        )
         rejections = []
         pipeline.normalize_section_reports(
             [{"topic": "technology", "news_items": [bad, valid_item("另一篇")]}],
@@ -153,6 +174,115 @@ class DeepSeekTests(unittest.TestCase):
                     "2026-09-16",
                     [],
                 )
+
+    @patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test"})
+    def test_accepts_topic_name_and_normalizes_it_to_id(self):
+        immigration_site = {
+            "topics": [{"id": "immigration", "name": "移民", "description": "description"}],
+            "editorial_rules": [],
+        }
+        content = __import__("json").dumps(
+            {"section": {"topic": "移民", "news_items": [valid_item("移民一"), valid_item("移民二")]}}
+        )
+        response = FakeResponse(
+            {"choices": [{"finish_reason": "stop", "message": {"content": content}}]}
+        )
+        rejections = []
+        with patch.object(pipeline.requests, "post", return_value=response):
+            reports = pipeline.call_deepseek_for_sections(
+                [self.candidate("immigration", "S1"), self.candidate("immigration", "S2")],
+                immigration_site,
+                "2026-09-16",
+                rejections,
+            )
+        self.assertEqual("immigration", reports[0]["topic"])
+        self.assertFalse(any(item["reason"] == "model_returned_wrong_section" for item in rejections))
+
+
+class GeminiReviewTests(unittest.TestCase):
+    def make_section(self, count=3):
+        return pipeline.normalize_section_reports(
+            [
+                {
+                    "topic": "technology",
+                    "news_items": [valid_item(f"事实核查文章{index}") for index in range(1, count + 1)],
+                }
+            ],
+            [source()],
+            site("technology"),
+            "2026-09-16",
+            [],
+        )[0]
+
+    def candidate(self):
+        item = source()
+        item.pop("ref")
+        return item
+
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "test"})
+    def test_rejects_one_article_without_stopping_other_articles(self):
+        section = self.make_section(3)
+        article_ids = [item["id"] for item in section["news_items"]]
+        captured_task = []
+
+        def fake_post(url, params, json, timeout):
+            request_prompt = __import__("json").loads(json["contents"][0]["parts"][0]["text"])
+            captured_task.append(request_prompt["task"])
+            reviews = [
+                {
+                    "topic": "technology",
+                    "article_id": article_id,
+                    "ok": index != 0,
+                    "reasons": ["来源摘要没有支持文中的具体金额"] if index == 0 else [],
+                }
+                for index, article_id in enumerate(article_ids)
+            ]
+            content = __import__("json").dumps({"reviews": reviews})
+            return FakeResponse(
+                {
+                    "candidates": [
+                        {"finishReason": "STOP", "content": {"parts": [{"text": content}]}}
+                    ]
+                }
+            )
+
+        rejections = []
+        with patch.object(pipeline.requests, "post", side_effect=fake_post):
+            accepted = pipeline.review_with_gemini(
+                [section], [self.candidate()], site("technology"), rejections
+            )
+        self.assertEqual(2, len(accepted[0]["news_items"]))
+        self.assertTrue(any(item["reason"] == "gemini_evidence_review_rejected" for item in rejections))
+        task = captured_task[0].lower()
+        for forbidden in ("character", "bullet", "dash", "url"):
+            self.assertNotIn(forbidden, task)
+
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "test"})
+    def test_drops_section_below_two_articles_without_raising(self):
+        section = self.make_section(2)
+        article_ids = [item["id"] for item in section["news_items"]]
+        reviews = [
+            {
+                "topic": "technology",
+                "article_id": article_id,
+                "ok": index == 0,
+                "reasons": [] if index == 0 else ["结论超出了来源支持范围"],
+            }
+            for index, article_id in enumerate(article_ids)
+        ]
+        content = __import__("json").dumps({"reviews": reviews})
+        response = FakeResponse(
+            {"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": content}]}}]}
+        )
+        rejections = []
+        with patch.object(pipeline.requests, "post", return_value=response):
+            accepted = pipeline.review_with_gemini(
+                [section], [self.candidate()], site("technology"), rejections
+            )
+        self.assertEqual([], accepted)
+        self.assertTrue(
+            any(item["reason"] == "section_has_fewer_than_two_articles_after_gemini" for item in rejections)
+        )
 
 
 class TtsTests(unittest.TestCase):

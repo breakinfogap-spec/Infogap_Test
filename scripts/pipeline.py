@@ -63,7 +63,8 @@ NEWS_ANALYST_SYSTEM_PROMPT = """# System Prompt: 新闻解读员
 
 先用“最后，总的来说，xxxxxx”收住全文。
 提出解决办法或理性呼吁。
-最后另起一段，固定格式：
+body_markdown 到这里结束，里面不得出现影响块。
+影响块必须单独放在 JSON 的 impact_markdown 字段，固定格式：
 这个对于[具体群体]的影响是：
 [短期] / [中期] / [长期]
 
@@ -199,6 +200,14 @@ def topic_description(topic_id: str, topics: list[dict]) -> str:
     return ""
 
 
+def normalize_topic_id(value: object, site: dict) -> str:
+    raw_value = str(value or "").strip()
+    for topic in site.get("topics", []):
+        if raw_value in (topic["id"], topic["name"]):
+            return topic["id"]
+    return ""
+
+
 def add_local_topic_if_needed(candidate: dict) -> list[str]:
     topics = set(candidate.get("topic_candidates") or [])
     geography = str(candidate.get("geography") or "").lower()
@@ -296,6 +305,7 @@ def call_deepseek_for_sections(
                 "Every specific claim about money, dates, eligibility, deadlines, quotes, or opposing views must cite one or more source refs.",
                 "Use only source_refs that appear in the provided candidates.",
                 "Write only the requested target_section. Do not return other sections.",
+                "The returned section.topic must repeat target_section.id exactly in English. Do not translate the topic id.",
             ],
             "writing_template": {
                 "section_overview": "今天有 X 条新闻会对我们的生活造成影响。",
@@ -381,7 +391,8 @@ def call_deepseek_for_sections(
         matching_sections = []
         for returned_section in raw_sections:
             returned_topic = str(returned_section.get("topic") or "").strip()
-            if returned_topic != topic_id:
+            normalized_topic = normalize_topic_id(returned_topic, site)
+            if normalized_topic != topic_id:
                 log_quality_rejection(
                     rejections,
                     topic_id,
@@ -389,7 +400,9 @@ def call_deepseek_for_sections(
                     returned_topic=returned_topic,
                 )
                 continue
-            matching_sections.append(returned_section)
+            normalized_section = dict(returned_section)
+            normalized_section["topic"] = topic_id
+            matching_sections.append(normalized_section)
         if not matching_sections:
             continue
         reports.extend(
@@ -466,9 +479,7 @@ def has_required_conclusion(body_markdown: str) -> bool:
     return final_paragraph.startswith("最后，总的来说，")
 
 
-def has_valid_impact_block(body_markdown: str, impact_markdown: str) -> bool:
-    if IMPACT_PREFIX_RE.search(body_markdown):
-        return False
+def is_valid_impact_text(impact_markdown: str) -> bool:
     matches = list(IMPACT_PREFIX_RE.finditer(impact_markdown))
     if len(matches) != 1 or impact_markdown[: matches[0].start()].strip():
         return False
@@ -476,6 +487,32 @@ def has_valid_impact_block(body_markdown: str, impact_markdown: str) -> bool:
     middle_pos = impact_markdown.find("[中期]", short_pos + 1)
     long_pos = impact_markdown.find("[长期]", middle_pos + 1)
     return short_pos >= 0 and short_pos < middle_pos < long_pos
+
+
+def move_trailing_impact_block(body_markdown: str, impact_markdown: str) -> tuple[str, str, bool]:
+    matches = list(IMPACT_PREFIX_RE.finditer(body_markdown))
+    if len(matches) != 1:
+        return body_markdown, impact_markdown, False
+    start = matches[0].start()
+    trailing_block = body_markdown[start:].strip()
+    if not is_valid_impact_text(trailing_block):
+        return body_markdown, impact_markdown, False
+
+    long_pos = trailing_block.find("[长期]")
+    long_term_tail = trailing_block[long_pos + len("[长期]") :].strip()
+    tail_paragraphs = [part for part in re.split(r"\n\s*\n", long_term_tail) if part.strip()]
+    if len(tail_paragraphs) > 1:
+        return body_markdown, impact_markdown, False
+
+    corrected_body = body_markdown[:start].rstrip()
+    corrected_impact = impact_markdown if is_valid_impact_text(impact_markdown) else trailing_block
+    if not corrected_body or not is_valid_impact_text(corrected_impact):
+        return body_markdown, impact_markdown, False
+    return corrected_body, corrected_impact, True
+
+
+def has_valid_impact_block(body_markdown: str, impact_markdown: str) -> bool:
+    return not IMPACT_PREFIX_RE.search(body_markdown) and is_valid_impact_text(impact_markdown)
 
 
 def short_summary(text: str) -> str:
@@ -516,9 +553,10 @@ def normalize_section_reports(
     reports = []
 
     for raw_section in raw_sections:
-        topic = str(raw_section.get("topic") or "").strip()
+        raw_topic = str(raw_section.get("topic") or "").strip()
+        topic = normalize_topic_id(raw_topic, site)
         if topic not in allowed_topics:
-            log_quality_rejection(rejections, topic or "unknown", "invalid_topic")
+            log_quality_rejection(rejections, raw_topic or "unknown", "invalid_topic")
             continue
 
         news_items = []
@@ -528,6 +566,23 @@ def normalize_section_reports(
             body_markdown = limit_headings(str(raw_item.get("body_markdown") or "").strip())
             impact_markdown = str(raw_item.get("impact_markdown") or "").strip()
             rejection_details = {"item_index": item_index, "title": title[:120]}
+            body_markdown, impact_markdown, impact_was_moved = move_trailing_impact_block(
+                body_markdown, impact_markdown
+            )
+            if impact_was_moved:
+                print(
+                    json.dumps(
+                        {
+                            "quality_gate_correction": {
+                                "topic": topic,
+                                "correction": "moved_trailing_impact_block_to_impact_markdown",
+                                **rejection_details,
+                            }
+                        },
+                        ensure_ascii=False,
+                    ),
+                    file=sys.stderr,
+                )
             if not title or not body_markdown or not impact_markdown:
                 log_quality_rejection(rejections, topic, "missing_required_article_field", **rejection_details)
                 continue
@@ -761,51 +816,132 @@ def concatenate_mp3_segments(segments: list[bytes]) -> tuple[bytes, str]:
         return output_path.read_bytes(), "ffmpeg_concat"
 
 
-def review_with_gemini(sections: list[dict]) -> None:
+def review_with_gemini(
+    sections: list[dict],
+    candidates: list[dict],
+    site: dict,
+    rejections: list[dict] | None = None,
+) -> list[dict]:
+    if rejections is None:
+        rejections = []
     if not sections:
-        return
+        return []
     api_key = os.environ["GEMINI_API_KEY"]
     model = os.getenv("LLM_REVIEW_MODEL", "gemini-3.5-flash-lite")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    source_by_ref = {source["ref"]: source for source in number_candidates(candidates, site)}
     prompt = {
         "task": (
-            "Check these Chinese section reports. Return JSON with ok true/false. "
-            "They must read like clear news explainers for ordinary readers, not bullet points or formal reports; "
-            "titles should directly name the core issue or viewpoint; include multiple viewpoints where source-backed; "
-            "use full paragraphs with at most two useful subheadings per news item; avoid heading-heavy outlines; "
-            "avoid em dashes; end with a final impact paragraph using the fixed short/mid/long term format; "
-            "reject every section with fewer than two accepted articles; each article must be 800-1500 Chinese characters; "
-            "and every specific money/date/eligibility/deadline claim must be supported by source refs."
+            "Review each article only for factual evidence quality. For every article decide whether the cited evidence "
+            "actually supports the nearby claims, whether any number, amount, date, deadline, or eligibility condition "
+            "is absent from the supplied evidence, and whether any conclusion makes an unsupported leap beyond the facts. "
+            "Return one review result for every article. Do not assess writing style or presentation."
         ),
-        "sections": [
+        "articles": [
             {
                 "topic": section["topic"],
-                "overview": section["overview"],
-                "news_items": [
+                "article_id": item["id"],
+                "title": item["title"],
+                "body_markdown": item["body_markdown"],
+                "impact_markdown": item["impact_markdown"],
+                "evidence": [
                     {
-                        "title": item["title"],
-                        "body_markdown": item["body_markdown"][:4000],
-                        "impact_markdown": item["impact_markdown"][:1000],
-                        "source_refs": item["source_refs"],
-                        "analysis_chars": item.get("analysis_chars"),
-                        "heading_count": item.get("heading_count"),
+                        "ref": ref,
+                        "source_name": source_by_ref[ref].get("source_name", ""),
+                        "title": source_by_ref[ref].get("title", ""),
+                        "published_at": source_by_ref[ref].get("published_at"),
+                        "summary": source_by_ref[ref].get("summary", ""),
                     }
-                    for item in section["news_items"]
+                    for ref in item["source_refs"]
+                    if ref in source_by_ref
                 ],
             }
             for section in sections
+            for item in section["news_items"]
         ],
+        "required_json_shape": {
+            "reviews": [
+                {
+                    "topic": "exact topic id from the article",
+                    "article_id": "exact article_id from the article",
+                    "ok": True,
+                    "reasons": ["specific evidence problem when ok is false"],
+                }
+            ]
+        },
     }
     response = requests.post(
         url,
         params={"key": api_key},
-        json={"contents": [{"parts": [{"text": json.dumps(prompt, ensure_ascii=False)}]}]},
+        json={
+            "contents": [{"parts": [{"text": json.dumps(prompt, ensure_ascii=False)}]}],
+            "generationConfig": {"responseMimeType": "application/json"},
+        },
         timeout=60,
     )
     response.raise_for_status()
-    text = "".join(part.get("text", "") for part in response.json()["candidates"][0]["content"]["parts"])
-    if "false" in text.lower() and "ok" in text.lower():
-        raise RuntimeError(f"Gemini review flagged the draft: {text[:500]}")
+    response_payload = response.json()
+    candidate = response_payload["candidates"][0]
+    finish_reason = candidate.get("finishReason")
+    if finish_reason not in (None, "STOP"):
+        raise RuntimeError(f"Gemini review stopped unexpectedly: finishReason={finish_reason}")
+    text = "".join(part.get("text", "") for part in candidate["content"]["parts"])
+    try:
+        review_payload = json.loads(extract_json(text))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Gemini returned invalid review JSON: {exc}") from exc
+
+    review_by_article = {}
+    for review in review_payload.get("reviews", []):
+        topic = normalize_topic_id(review.get("topic"), site)
+        article_id = str(review.get("article_id") or "").strip()
+        if topic and article_id:
+            review_by_article[(topic, article_id)] = review
+
+    expected_keys = {
+        (section["topic"], item["id"])
+        for section in sections
+        for item in section["news_items"]
+    }
+    missing_keys = expected_keys - set(review_by_article)
+    if missing_keys:
+        raise RuntimeError(f"Gemini review omitted {len(missing_keys)} article(s): {sorted(missing_keys)}")
+
+    accepted_sections = []
+    for section in sections:
+        accepted_items = []
+        for item in section["news_items"]:
+            review = review_by_article[(section["topic"], item["id"])]
+            if review.get("ok") is True:
+                accepted_items.append(item)
+                continue
+            reasons = review.get("reasons") or review.get("reason") or []
+            if isinstance(reasons, str):
+                reasons = [reasons]
+            log_quality_rejection(
+                rejections,
+                section["topic"],
+                "gemini_evidence_review_rejected",
+                article_id=item["id"],
+                title=item["title"][:120],
+                details=[str(reason) for reason in reasons],
+            )
+
+        if len(accepted_items) < MIN_NEWS_ITEMS_PER_SECTION:
+            log_quality_rejection(
+                rejections,
+                section["topic"],
+                "section_has_fewer_than_two_articles_after_gemini",
+                articles_before_review=len(section["news_items"]),
+                accepted_articles=len(accepted_items),
+            )
+            continue
+        accepted_section = dict(section)
+        accepted_section["news_items"] = accepted_items
+        accepted_section["overview"] = f"今天有 {len(accepted_items)} 条新闻会对我们的生活造成影响。"
+        accepted_sections.append(accepted_section)
+
+    return accepted_sections
 
 
 def synthesize_tts(sections: list[dict], date_text: str) -> None:
@@ -987,7 +1123,24 @@ def main() -> int:
         return 1
 
     if args.review:
-        review_with_gemini(sections)
+        sections = review_with_gemini(sections, candidates, site, quality_rejections)
+        if candidates and not sections:
+            write_run_artifacts(args.date, candidates, sections, site, quality_rejections)
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "date": args.date,
+                        "candidates": len(candidates),
+                        "sections": 0,
+                        "news_items": 0,
+                        "error": "No section retained at least two articles after Gemini evidence review.",
+                    },
+                    ensure_ascii=False,
+                ),
+                file=sys.stderr,
+            )
+            return 1
 
     if args.tts:
         synthesize_tts(sections, args.date)
