@@ -109,9 +109,18 @@ def load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def normalize_date_text(date_text: str) -> str:
+    raw = str(date_text or "").strip()
+    match = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", raw)
+    if not match:
+        raise ValueError(f"Invalid date '{date_text}'. Use YYYY-MM-DD, for example 2026-09-17.")
+    year, month, day = (int(part) for part in match.groups())
+    return dt.date(year, month, day).isoformat()
+
+
 def vancouver_window(date_text: str, timezone: str) -> tuple[dt.datetime, dt.datetime]:
     zone = ZoneInfo(timezone)
-    start = dt.datetime.fromisoformat(date_text).replace(tzinfo=zone)
+    start = dt.datetime.fromisoformat(normalize_date_text(date_text)).replace(tzinfo=zone)
     return start, start + dt.timedelta(days=1)
 
 
@@ -195,7 +204,7 @@ collect_candidates.last_debug = []
 
 
 def date_text_days_ago(date_text: str, days: int) -> str:
-    return (dt.date.fromisoformat(date_text) - dt.timedelta(days=days)).isoformat()
+    return (dt.date.fromisoformat(normalize_date_text(date_text)) - dt.timedelta(days=days)).isoformat()
 
 
 def used_source_urls(date_text: str, lookback_days: int = FALLBACK_LOOKBACK_DAYS) -> set[str]:
@@ -1337,10 +1346,11 @@ def main() -> int:
     parser.add_argument("--review", action="store_true")
     parser.add_argument("--tts", action="store_true")
     args = parser.parse_args()
+    publication_date = normalize_date_text(args.date)
 
     site = load_json(ROOT / "config" / "site.json")
     source_registry = load_json(ROOT / "config" / "source-registry.json")
-    candidates = collect_candidates_for_publication(source_registry, args.date, site["timezone"])
+    candidates = collect_candidates_for_publication(source_registry, publication_date, site["timezone"])
 
     if not candidates and not args.allow_empty:
         print("No enabled source produced candidates. Enable verified feeds before the real run.", file=sys.stderr)
@@ -1349,29 +1359,29 @@ def main() -> int:
 
     quality_rejections = []
     if args.use_llm:
-        sections = call_deepseek_for_sections(candidates, site, args.date, rejections=quality_rejections)
+        sections = call_deepseek_for_sections(candidates, site, publication_date, rejections=quality_rejections)
         missing_topics = missing_section_topics(site, sections)
         if missing_topics:
             repair_sections = call_deepseek_for_sections(
                 candidates,
                 site,
-                args.date,
+                publication_date,
                 rejections=quality_rejections,
                 target_topics=missing_topics,
                 feedback_by_topic=feedback_by_topic_from_rejections(quality_rejections, missing_topics),
             )
             sections = merge_sections(sections, repair_sections)
     else:
-        sections = section_stub(site, args.date)
+        sections = section_stub(site, publication_date)
 
     if args.use_llm and candidates and missing_section_topics(site, sections):
         missing_topics = sorted(missing_section_topics(site, sections))
-        write_run_artifacts(args.date, candidates, sections, site, quality_rejections)
+        write_run_artifacts(publication_date, candidates, sections, site, quality_rejections)
         print(
             json.dumps(
                 {
                     "ok": False,
-                    "date": args.date,
+                    "date": publication_date,
                     "candidates": len(candidates),
                     "sections": len(sections),
                     "news_items": total_news_count(sections),
@@ -1393,7 +1403,7 @@ def main() -> int:
             repair_sections = call_deepseek_for_sections(
                 candidates,
                 site,
-                args.date,
+                publication_date,
                 rejections=quality_rejections,
                 target_topics=missing_topics,
                 feedback_by_topic=feedback_by_topic_from_rejections(quality_rejections, missing_topics),
@@ -1406,12 +1416,12 @@ def main() -> int:
         sections = reviewed_sections
         if args.use_llm and candidates and missing_section_topics(site, sections):
             missing_topics = sorted(missing_section_topics(site, sections))
-            write_run_artifacts(args.date, candidates, sections, site, quality_rejections)
+            write_run_artifacts(publication_date, candidates, sections, site, quality_rejections)
             print(
                 json.dumps(
                     {
                         "ok": False,
-                        "date": args.date,
+                        "date": publication_date,
                         "candidates": len(candidates),
                         "sections": len(sections),
                         "news_items": total_news_count(sections),
@@ -1427,15 +1437,15 @@ def main() -> int:
     annotate_cross_section_duplicates(sections, site)
 
     if args.tts:
-        synthesize_tts(sections, args.date)
+        synthesize_tts(sections, publication_date)
 
-    render_site(site, sections, args.date, preserve_audio=args.tts)
-    write_run_artifacts(args.date, candidates, sections, site, quality_rejections)
+    render_site(site, sections, publication_date, preserve_audio=args.tts)
+    write_run_artifacts(publication_date, candidates, sections, site, quality_rejections)
     print(
         json.dumps(
             {
                 "ok": True,
-                "date": args.date,
+                "date": publication_date,
                 "candidates": len(candidates),
                 "sections": len(sections),
                 "news_items": total_news_count(sections),

@@ -60,6 +60,17 @@ def valid_item(title):
     }
 
 
+class DateInputTests(unittest.TestCase):
+    def test_accepts_unpadded_workflow_date(self):
+        self.assertEqual("2026-09-17", pipeline.normalize_date_text("2026-9-17"))
+        self.assertEqual("2026-09-17", pipeline.normalize_date_text(" 2026-09-17 "))
+        self.assertEqual("2026-09-17", pipeline.date_text_days_ago("2026-9-18", 1))
+
+    def test_rejects_invalid_workflow_date(self):
+        with self.assertRaisesRegex(ValueError, "Use YYYY-MM-DD"):
+            pipeline.normalize_date_text("09/17/2026")
+
+
 class QualityGateTests(unittest.TestCase):
     def test_accepts_two_articles_between_800_and_1500_chars(self):
         rejections = []
