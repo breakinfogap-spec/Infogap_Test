@@ -34,6 +34,7 @@ MIN_NEWS_ITEMS_PER_SECTION = 1
 MAX_NEWS_ITEMS_PER_SECTION = 3
 MAX_HEADINGS_PER_ITEM = 2
 TTS_CHUNK_MAX_BYTES = 4000
+TTS_SENTENCE_MAX_BYTES = 900
 TTS_MAX_ATTEMPTS = 4
 FALLBACK_LOOKBACK_DAYS = 7
 SECTION_GENERATION_ATTEMPTS = 2
@@ -937,41 +938,58 @@ def log_gemini_review_unavailable(rejections: list[dict], sections: list[dict], 
         )
 
 
+def has_sentence_ending(text: str) -> bool:
+    return bool(re.search(r"[。！？!?；;.]$", text.rstrip()))
+
+
+def sentence_safe_piece(text: str) -> str:
+    piece = text.strip()
+    if piece and not has_sentence_ending(piece):
+        piece += "。"
+    return piece
+
+
 def split_oversized_text(text: str, max_bytes: int) -> list[str]:
     pieces = []
     remaining = text
     while remaining:
         encoded = remaining.encode("utf-8")
         if len(encoded) <= max_bytes:
-            pieces.append(remaining)
+            pieces.append(sentence_safe_piece(remaining))
             break
         cut = encoded[:max_bytes].decode("utf-8", errors="ignore")
-        preferred = max(cut.rfind(mark) for mark in ("，", "、", ",", " "))
+        preferred = max(cut.rfind(mark) for mark in ("，", "、", ",", " ", "：", ":"))
         if preferred > 0:
             cut = cut[: preferred + 1]
         cut = cut.rstrip()
         if not cut:
             cut = encoded[:max_bytes].decode("utf-8", errors="ignore")
-        pieces.append(cut)
+        pieces.append(sentence_safe_piece(cut))
         remaining = remaining[len(cut) :].lstrip()
     return pieces
 
 
-def split_tts_text(text: str, max_bytes: int = TTS_CHUNK_MAX_BYTES) -> list[str]:
+def split_tts_text(
+    text: str,
+    max_bytes: int = TTS_CHUNK_MAX_BYTES,
+    max_sentence_bytes: int = TTS_SENTENCE_MAX_BYTES,
+) -> list[str]:
     if max_bytes <= 0:
         raise ValueError("max_bytes must be positive")
+    if max_sentence_bytes <= 0:
+        raise ValueError("max_sentence_bytes must be positive")
+    max_sentence_bytes = min(max_sentence_bytes, max_bytes)
     paragraphs = [paragraph.strip() for paragraph in re.split(r"\n\s*\n", text) if paragraph.strip()]
     units = []
     for paragraph in paragraphs:
-        if len(paragraph.encode("utf-8")) <= max_bytes:
-            units.append(paragraph)
-            continue
         sentences = [part.strip() for part in re.split(r"(?<=[。！？!?；;])", paragraph) if part.strip()]
+        if not sentences:
+            sentences = [paragraph]
         for sentence in sentences:
-            if len(sentence.encode("utf-8")) <= max_bytes:
+            if len(sentence.encode("utf-8")) <= max_sentence_bytes:
                 units.append(sentence)
             else:
-                units.extend(split_oversized_text(sentence, max_bytes))
+                units.extend(split_oversized_text(sentence, max_sentence_bytes))
 
     chunks = []
     current = ""
@@ -1105,6 +1123,8 @@ def post_gemini_review(url: str, api_key: str, payload: dict) -> requests.Respon
                 response.raise_for_status()
                 return response
             last_error = f"HTTP {response.status_code}: {response.text[:300]}"
+            if "prepayment credits are depleted" in response.text.lower():
+                break
         except requests.HTTPError as exc:
             status_code = exc.response.status_code if exc.response is not None else None
             if status_code not in GEMINI_REVIEW_RETRY_STATUSES:
@@ -1153,6 +1173,14 @@ def retryable_google_api_errors(google_exceptions) -> tuple[type[BaseException],
         for name in names
         if isinstance((error_type := getattr(google_exceptions, name, None)), type)
     )
+
+
+def skippable_google_tts_errors(google_exceptions) -> tuple[type[BaseException], ...]:
+    invalid_argument = getattr(google_exceptions, "InvalidArgument", None)
+    retryable = retryable_google_api_errors(google_exceptions)
+    if isinstance(invalid_argument, type):
+        return retryable + (invalid_argument,)
+    return retryable
 
 
 def tts_retry_delay_seconds(attempt: int) -> float:
@@ -1372,7 +1400,7 @@ def synthesize_tts(sections: list[dict], date_text: str) -> None:
                         chunk_index,
                     )
                     audio_segments.append(response.audio_content)
-            except retryable_google_api_errors(google_exceptions) as exc:
+            except skippable_google_tts_errors(google_exceptions) as exc:
                 item["audio_path"] = ""
                 item["audio_error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
                 print(

@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 import sys
 import tempfile
@@ -473,6 +474,19 @@ class TtsTests(unittest.TestCase):
         self.assertTrue(all(len(chunk.encode("utf-8")) <= 4000 for chunk in chunks))
         self.assertEqual(text.replace("\n", ""), "".join(chunks).replace("\n", ""))
 
+    def test_splits_long_sentence_even_when_chunk_is_under_4000_bytes(self):
+        text = "加拿大普通家庭会感觉压力变化" * 80
+        chunks = pipeline.split_tts_text(text, max_bytes=4000, max_sentence_bytes=300)
+        pieces = [
+            piece.strip()
+            for chunk in chunks
+            for piece in re.split(r"\n\s*\n", chunk)
+            if piece.strip()
+        ]
+        self.assertGreater(len(pieces), 1)
+        self.assertTrue(all(len(piece.encode("utf-8")) <= 320 for piece in pieces))
+        self.assertTrue(all(pipeline.has_sentence_ending(piece) for piece in pieces))
+
     def test_mp3_byte_concat_reports_duration(self):
         frame = bytes.fromhex("fffb9000") + bytes(413)
         segment = frame * 5
@@ -575,6 +589,22 @@ class TtsTests(unittest.TestCase):
         self.assertEqual("", item["audio_path"])
         self.assertIn("ServiceUnavailable", item["audio_error"])
         self.assertEqual(2, fake_client.calls)
+
+    def test_synthesize_tts_skips_article_on_invalid_argument(self):
+        from google.api_core import exceptions as google_exceptions
+
+        class FakeClient:
+            def synthesize_speech(self, input, voice, audio_config):
+                raise google_exceptions.InvalidArgument("sentence is too long")
+
+        sections = [{"topic": "technology", "news_items": [{"id": "invalid", "tts_text": "无效句子。" * 20}]}]
+        with tempfile.TemporaryDirectory() as temp_name:
+            with patch.object(pipeline, "GENERATED", Path(temp_name)):
+                with patch("google.cloud.texttospeech.TextToSpeechClient", return_value=FakeClient()):
+                    pipeline.synthesize_tts(sections, "2026-09-16")
+        item = sections[0]["news_items"][0]
+        self.assertEqual("", item["audio_path"])
+        self.assertIn("InvalidArgument", item["audio_error"])
 
 
 if __name__ == "__main__":
