@@ -34,6 +34,7 @@ MIN_NEWS_ITEMS_PER_SECTION = 1
 MAX_NEWS_ITEMS_PER_SECTION = 3
 MAX_HEADINGS_PER_ITEM = 2
 TTS_CHUNK_MAX_BYTES = 4000
+TTS_MAX_ATTEMPTS = 4
 FALLBACK_LOOKBACK_DAYS = 7
 SECTION_GENERATION_ATTEMPTS = 2
 POST_REVIEW_REPAIR_ATTEMPTS = 2
@@ -1137,6 +1138,69 @@ def post_gemini_review(url: str, api_key: str, payload: dict) -> requests.Respon
     )
 
 
+def retryable_google_api_errors(google_exceptions) -> tuple[type[BaseException], ...]:
+    names = (
+        "ServiceUnavailable",
+        "DeadlineExceeded",
+        "TooManyRequests",
+        "ResourceExhausted",
+        "InternalServerError",
+        "BadGateway",
+        "GatewayTimeout",
+    )
+    return tuple(
+        error_type
+        for name in names
+        if isinstance((error_type := getattr(google_exceptions, name, None)), type)
+    )
+
+
+def tts_retry_delay_seconds(attempt: int) -> float:
+    return min(5.0 * (2 ** (attempt - 1)), 30.0)
+
+
+def synthesize_speech_chunk_with_retry(
+    client,
+    texttospeech,
+    google_exceptions,
+    text_chunk: str,
+    voice_name: str,
+    topic: str,
+    article_id: str,
+    chunk_index: int,
+):
+    retryable_errors = retryable_google_api_errors(google_exceptions)
+    for attempt in range(1, TTS_MAX_ATTEMPTS + 1):
+        try:
+            return client.synthesize_speech(
+                input=texttospeech.SynthesisInput(text=text_chunk),
+                voice=texttospeech.VoiceSelectionParams(language_code="cmn-CN", name=voice_name),
+                audio_config=texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3),
+            )
+        except retryable_errors as exc:
+            if attempt >= TTS_MAX_ATTEMPTS:
+                raise
+            delay = tts_retry_delay_seconds(attempt)
+            print(
+                json.dumps(
+                    {
+                        "tts_retry": {
+                            "topic": topic,
+                            "article_id": article_id,
+                            "chunk_index": chunk_index,
+                            "attempt": attempt,
+                            "max_attempts": TTS_MAX_ATTEMPTS,
+                            "delay_seconds": delay,
+                            "error": f"{type(exc).__name__}: {str(exc)[:300]}",
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+
+
 def review_with_gemini(
     sections: list[dict],
     candidates: list[dict],
@@ -1276,6 +1340,7 @@ def synthesize_tts(sections: list[dict], date_text: str) -> None:
             path.write_bytes(base64.b64decode(raw_credentials))
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(path)
 
+    from google.api_core import exceptions as google_exceptions
     from google.cloud import texttospeech
 
     client = texttospeech.TextToSpeechClient()
@@ -1294,13 +1359,37 @@ def synthesize_tts(sections: list[dict], date_text: str) -> None:
             if not text_chunks:
                 raise RuntimeError(f"TTS text is empty for article {item['id']} in section {section['topic']}")
             audio_segments = []
-            for text_chunk in text_chunks:
-                response = client.synthesize_speech(
-                    input=texttospeech.SynthesisInput(text=text_chunk),
-                    voice=texttospeech.VoiceSelectionParams(language_code="cmn-CN", name=voice_name),
-                    audio_config=texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3),
+            try:
+                for chunk_index, text_chunk in enumerate(text_chunks, start=1):
+                    response = synthesize_speech_chunk_with_retry(
+                        client,
+                        texttospeech,
+                        google_exceptions,
+                        text_chunk,
+                        voice_name,
+                        section["topic"],
+                        item["id"],
+                        chunk_index,
+                    )
+                    audio_segments.append(response.audio_content)
+            except retryable_google_api_errors(google_exceptions) as exc:
+                item["audio_path"] = ""
+                item["audio_error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
+                print(
+                    json.dumps(
+                        {
+                            "tts_error": {
+                                "topic": section["topic"],
+                                "article_id": item["id"],
+                                "segments": len(text_chunks),
+                                "error": item["audio_error"],
+                            }
+                        },
+                        ensure_ascii=False,
+                    ),
+                    file=sys.stderr,
                 )
-                audio_segments.append(response.audio_content)
+                continue
             combined_audio, merge_method = concatenate_mp3_segments(audio_segments)
             output.write_bytes(combined_audio)
             duration_seconds = round(mp3_duration_seconds(combined_audio), 2)

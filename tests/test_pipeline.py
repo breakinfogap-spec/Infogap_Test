@@ -525,6 +525,57 @@ class TtsTests(unittest.TestCase):
             self.assertGreater(sections[0]["news_items"][0]["audio_segments"], 1)
             self.assertEqual(1, sections[0]["news_items"][1]["audio_segments"])
 
+    def test_synthesize_tts_retries_transient_google_error(self):
+        from google.api_core import exceptions as google_exceptions
+
+        frame = bytes.fromhex("fffb9000") + bytes(413)
+
+        class FakeClient:
+            def __init__(self):
+                self.calls = 0
+
+            def synthesize_speech(self, input, voice, audio_config):
+                self.calls += 1
+                if self.calls == 1:
+                    raise google_exceptions.ServiceUnavailable("temporary outage")
+                return type("Response", (), {"audio_content": frame * 5})()
+
+        fake_client = FakeClient()
+        sections = [{"topic": "technology", "news_items": [{"id": "retry", "tts_text": "重试测试。" * 20}]}]
+        with tempfile.TemporaryDirectory() as temp_name:
+            with patch.object(pipeline, "GENERATED", Path(temp_name)):
+                with patch.object(pipeline.time, "sleep") as sleep:
+                    with patch("google.cloud.texttospeech.TextToSpeechClient", return_value=fake_client):
+                        pipeline.synthesize_tts(sections, "2026-09-16")
+            output_path = Path(temp_name) / sections[0]["news_items"][0]["audio_path"]
+            self.assertTrue(output_path.exists())
+        self.assertEqual(2, fake_client.calls)
+        sleep.assert_called_once_with(5.0)
+
+    def test_synthesize_tts_skips_article_after_retries_are_exhausted(self):
+        from google.api_core import exceptions as google_exceptions
+
+        class FakeClient:
+            def __init__(self):
+                self.calls = 0
+
+            def synthesize_speech(self, input, voice, audio_config):
+                self.calls += 1
+                raise google_exceptions.ServiceUnavailable("temporary outage")
+
+        fake_client = FakeClient()
+        sections = [{"topic": "technology", "news_items": [{"id": "skip", "tts_text": "失败测试。" * 20}]}]
+        with tempfile.TemporaryDirectory() as temp_name:
+            with patch.object(pipeline, "GENERATED", Path(temp_name)):
+                with patch.object(pipeline, "TTS_MAX_ATTEMPTS", 2):
+                    with patch.object(pipeline.time, "sleep"):
+                        with patch("google.cloud.texttospeech.TextToSpeechClient", return_value=fake_client):
+                            pipeline.synthesize_tts(sections, "2026-09-16")
+        item = sections[0]["news_items"][0]
+        self.assertEqual("", item["audio_path"])
+        self.assertIn("ServiceUnavailable", item["audio_error"])
+        self.assertEqual(2, fake_client.calls)
+
 
 if __name__ == "__main__":
     unittest.main()
