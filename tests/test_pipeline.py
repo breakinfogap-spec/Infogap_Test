@@ -1,4 +1,5 @@
 import os
+import requests
 import sys
 import tempfile
 import unittest
@@ -11,10 +12,15 @@ import pipeline
 
 
 class FakeResponse:
-    def __init__(self, payload):
+    def __init__(self, payload, status_code=200, text="", headers=None):
         self.payload = payload
+        self.status_code = status_code
+        self.text = text
+        self.headers = headers or {}
 
     def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code} error", response=self)
         return None
 
     def json(self):
@@ -418,6 +424,45 @@ class GeminiReviewTests(unittest.TestCase):
         self.assertEqual(1, len(accepted))
         self.assertEqual(1, len(accepted[0]["news_items"]))
         self.assertTrue(any(item["reason"] == "gemini_evidence_review_rejected" for item in rejections))
+
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "test"})
+    def test_retries_gemini_429_then_succeeds(self):
+        section = self.make_section(1)
+        article_id = section["news_items"][0]["id"]
+        content = __import__("json").dumps(
+            {"reviews": [{"topic": "technology", "article_id": article_id, "ok": True, "reasons": []}]}
+        )
+        success = FakeResponse(
+            {"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": content}]}}]}
+        )
+        calls = [FakeResponse({}, status_code=429, text="quota exceeded"), success]
+
+        def fake_post(*_args, **_kwargs):
+            return calls.pop(0)
+
+        with patch.object(pipeline.requests, "post", side_effect=fake_post):
+            with patch.object(pipeline.time, "sleep") as sleep:
+                accepted = pipeline.review_with_gemini(
+                    [section], [self.candidate()], site("technology"), []
+                )
+        self.assertEqual(1, len(accepted))
+        self.assertEqual(1, len(accepted[0]["news_items"]))
+        sleep.assert_called_once_with(10.0)
+
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "test"})
+    def test_raises_review_unavailable_after_gemini_429_retries_are_exhausted(self):
+        section = self.make_section(1)
+
+        def fake_post(*_args, **_kwargs):
+            return FakeResponse({}, status_code=429, text="quota exceeded")
+
+        with patch.object(pipeline, "GEMINI_REVIEW_MAX_ATTEMPTS", 2):
+            with patch.object(pipeline.requests, "post", side_effect=fake_post):
+                with patch.object(pipeline.time, "sleep"):
+                    with self.assertRaises(pipeline.GeminiReviewUnavailable):
+                        pipeline.review_with_gemini(
+                            [section], [self.candidate()], site("technology"), []
+                        )
 
 
 class TtsTests(unittest.TestCase):

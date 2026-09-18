@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -36,6 +37,8 @@ TTS_CHUNK_MAX_BYTES = 4000
 FALLBACK_LOOKBACK_DAYS = 7
 SECTION_GENERATION_ATTEMPTS = 2
 POST_REVIEW_REPAIR_ATTEMPTS = 2
+GEMINI_REVIEW_MAX_ATTEMPTS = 4
+GEMINI_REVIEW_RETRY_STATUSES = {429, 500, 502, 503, 504}
 FINANCE_PRIORITY_TERMS = (
     "interest rate",
     "rates",
@@ -103,6 +106,10 @@ body_markdown 到这里结束，里面不得出现影响块。
 不用专业术语，必须出现时加一句解释。
 不用破折号。
 像跟朋友聊天一样解释，不是写报告。"""
+
+
+class GeminiReviewUnavailable(RuntimeError):
+    """Raised when Gemini evidence review is temporarily unavailable after retries."""
 
 
 def load_json(path: Path) -> dict:
@@ -917,6 +924,18 @@ def feedback_by_topic_from_rejections(rejections: list[dict], topics: set[str]) 
     }
 
 
+def log_gemini_review_unavailable(rejections: list[dict], sections: list[dict], exc: Exception) -> None:
+    details = [str(exc)]
+    for section in sections:
+        log_quality_rejection(
+            rejections,
+            section.get("topic", "unknown"),
+            "gemini_review_unavailable",
+            articles_kept=len(section.get("news_items", [])),
+            details=details,
+        )
+
+
 def split_oversized_text(text: str, max_bytes: int) -> list[str]:
     pieces = []
     remaining = text
@@ -1060,6 +1079,64 @@ def concatenate_mp3_segments(segments: list[bytes]) -> tuple[bytes, str]:
         return output_path.read_bytes(), "ffmpeg_concat"
 
 
+def retry_delay_seconds(response: requests.Response | None, attempt: int) -> float:
+    retry_after = response.headers.get("retry-after") if response is not None else None
+    if retry_after:
+        try:
+            return min(float(retry_after), 45.0)
+        except ValueError:
+            pass
+    return min(10.0 * (2 ** (attempt - 1)), 45.0)
+
+
+def post_gemini_review(url: str, api_key: str, payload: dict) -> requests.Response:
+    last_error = ""
+    for attempt in range(1, GEMINI_REVIEW_MAX_ATTEMPTS + 1):
+        response = None
+        try:
+            response = requests.post(
+                url,
+                params={"key": api_key},
+                json=payload,
+                timeout=60,
+            )
+            if response.status_code not in GEMINI_REVIEW_RETRY_STATUSES:
+                response.raise_for_status()
+                return response
+            last_error = f"HTTP {response.status_code}: {response.text[:300]}"
+        except requests.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            if status_code not in GEMINI_REVIEW_RETRY_STATUSES:
+                raise
+            response = exc.response
+            last_error = f"HTTP {status_code}: {str(exc)[:300]}"
+        except requests.RequestException as exc:
+            last_error = f"{type(exc).__name__}: {str(exc)[:300]}"
+
+        if attempt >= GEMINI_REVIEW_MAX_ATTEMPTS:
+            break
+        delay = retry_delay_seconds(response, attempt)
+        print(
+            json.dumps(
+                {
+                    "gemini_review_retry": {
+                        "attempt": attempt,
+                        "max_attempts": GEMINI_REVIEW_MAX_ATTEMPTS,
+                        "delay_seconds": delay,
+                        "error": last_error,
+                    }
+                },
+                ensure_ascii=False,
+            ),
+            file=sys.stderr,
+        )
+        time.sleep(delay)
+
+    raise GeminiReviewUnavailable(
+        f"Gemini review unavailable after {GEMINI_REVIEW_MAX_ATTEMPTS} attempts: {last_error}"
+    )
+
+
 def review_with_gemini(
     sections: list[dict],
     candidates: list[dict],
@@ -1114,16 +1191,14 @@ def review_with_gemini(
             ]
         },
     }
-    response = requests.post(
+    response = post_gemini_review(
         url,
-        params={"key": api_key},
-        json={
+        api_key,
+        {
             "contents": [{"parts": [{"text": json.dumps(prompt, ensure_ascii=False)}]}],
             "generationConfig": {"responseMimeType": "application/json"},
         },
-        timeout=60,
     )
-    response.raise_for_status()
     response_payload = response.json()
     candidate = response_payload["candidates"][0]
     finish_reason = candidate.get("finishReason")
@@ -1400,10 +1475,16 @@ def main() -> int:
         return 1
 
     if args.review:
-        reviewed_sections = review_with_gemini(sections, candidates, site, quality_rejections)
+        review_available = True
+        try:
+            reviewed_sections = review_with_gemini(sections, candidates, site, quality_rejections)
+        except GeminiReviewUnavailable as exc:
+            review_available = False
+            log_gemini_review_unavailable(quality_rejections, sections, exc)
+            reviewed_sections = sections
         missing_topics = missing_section_topics(site, reviewed_sections)
         repair_attempt = 0
-        while missing_topics and repair_attempt < POST_REVIEW_REPAIR_ATTEMPTS:
+        while review_available and missing_topics and repair_attempt < POST_REVIEW_REPAIR_ATTEMPTS:
             repair_attempt += 1
             repair_sections = call_deepseek_for_sections(
                 candidates,
@@ -1415,11 +1496,16 @@ def main() -> int:
             )
             if not repair_sections:
                 break
-            reviewed_repair_sections = review_with_gemini(repair_sections, candidates, site, quality_rejections)
+            try:
+                reviewed_repair_sections = review_with_gemini(repair_sections, candidates, site, quality_rejections)
+            except GeminiReviewUnavailable as exc:
+                review_available = False
+                log_gemini_review_unavailable(quality_rejections, repair_sections, exc)
+                reviewed_repair_sections = repair_sections
             reviewed_sections = merge_sections(reviewed_sections, reviewed_repair_sections)
             missing_topics = missing_section_topics(site, reviewed_sections)
         sections = reviewed_sections
-        if args.use_llm and candidates and missing_section_topics(site, sections):
+        if review_available and args.use_llm and candidates and missing_section_topics(site, sections):
             missing_topics = sorted(missing_section_topics(site, sections))
             write_run_artifacts(publication_date, candidates, sections, site, quality_rejections)
             print(
