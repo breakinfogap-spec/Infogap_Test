@@ -1258,11 +1258,14 @@ def retryable_google_api_errors(google_exceptions) -> tuple[type[BaseException],
 
 
 def skippable_google_tts_errors(google_exceptions) -> tuple[type[BaseException], ...]:
-    invalid_argument = getattr(google_exceptions, "InvalidArgument", None)
+    names = ("InvalidArgument", "FailedPrecondition", "PermissionDenied", "NotFound")
     retryable = retryable_google_api_errors(google_exceptions)
-    if isinstance(invalid_argument, type):
-        return retryable + (invalid_argument,)
-    return retryable
+    voice_errors = tuple(
+        error_type
+        for name in names
+        if isinstance((error_type := getattr(google_exceptions, name, None)), type)
+    )
+    return retryable + voice_errors
 
 
 def tts_retry_delay_seconds(attempt: int) -> float:
@@ -1455,6 +1458,10 @@ def synthesize_tts(sections: list[dict], date_text: str) -> None:
 
     client = texttospeech.TextToSpeechClient()
     voice_name = os.getenv("TTS_VOICE", "cmn-CN-Chirp3-HD-Achernar")
+    fallback_voice_name = os.getenv("TTS_FALLBACK_VOICE", "cmn-CN-Wavenet-A")
+    voice_names = [voice_name]
+    if fallback_voice_name and fallback_voice_name != voice_name:
+        voice_names.append(fallback_voice_name)
     audio_dir = GENERATED / "audio" / date_text
     audio_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1469,22 +1476,46 @@ def synthesize_tts(sections: list[dict], date_text: str) -> None:
             if not text_chunks:
                 raise RuntimeError(f"TTS text is empty for article {item['id']} in section {section['topic']}")
             audio_segments = []
-            try:
-                for chunk_index, text_chunk in enumerate(text_chunks, start=1):
-                    response = synthesize_speech_chunk_with_retry(
-                        client,
-                        texttospeech,
-                        google_exceptions,
-                        text_chunk,
-                        voice_name,
-                        section["topic"],
-                        item["id"],
-                        chunk_index,
-                    )
-                    audio_segments.append(response.audio_content)
-            except skippable_google_tts_errors(google_exceptions) as exc:
+            used_voice_name = ""
+            last_error = None
+            for voice_index, selected_voice_name in enumerate(voice_names):
+                audio_segments = []
+                try:
+                    for chunk_index, text_chunk in enumerate(text_chunks, start=1):
+                        response = synthesize_speech_chunk_with_retry(
+                            client,
+                            texttospeech,
+                            google_exceptions,
+                            text_chunk,
+                            selected_voice_name,
+                            section["topic"],
+                            item["id"],
+                            chunk_index,
+                        )
+                        audio_segments.append(response.audio_content)
+                    used_voice_name = selected_voice_name
+                    break
+                except skippable_google_tts_errors(google_exceptions) as exc:
+                    last_error = exc
+                    if voice_index + 1 < len(voice_names):
+                        print(
+                            json.dumps(
+                                {
+                                    "tts_fallback": {
+                                        "topic": section["topic"],
+                                        "article_id": item["id"],
+                                        "from_voice": selected_voice_name,
+                                        "to_voice": voice_names[voice_index + 1],
+                                        "error": f"{type(exc).__name__}: {str(exc)[:300]}",
+                                    }
+                                },
+                                ensure_ascii=False,
+                            ),
+                            file=sys.stderr,
+                        )
+            if not used_voice_name:
                 item["audio_path"] = ""
-                item["audio_error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
+                item["audio_error"] = f"{type(last_error).__name__}: {str(last_error)[:300]}"
                 print(
                     json.dumps(
                         {
@@ -1492,6 +1523,7 @@ def synthesize_tts(sections: list[dict], date_text: str) -> None:
                                 "topic": section["topic"],
                                 "article_id": item["id"],
                                 "segments": len(text_chunks),
+                                "voices_attempted": voice_names,
                                 "error": item["audio_error"],
                             }
                         },
@@ -1506,6 +1538,8 @@ def synthesize_tts(sections: list[dict], date_text: str) -> None:
             item["audio_path"] = f"audio/{date_text}/{filename}"
             item["audio_segments"] = len(text_chunks)
             item["audio_duration_seconds"] = duration_seconds
+            item["audio_voice"] = used_voice_name
+            item["audio_fallback_used"] = used_voice_name != voice_name
             print(
                 json.dumps(
                     {
@@ -1516,6 +1550,8 @@ def synthesize_tts(sections: list[dict], date_text: str) -> None:
                             "duration_seconds": duration_seconds,
                             "audio_bytes": len(combined_audio),
                             "merge_method": merge_method,
+                            "voice": used_voice_name,
+                            "fallback_used": used_voice_name != voice_name,
                         }
                     },
                     ensure_ascii=False,

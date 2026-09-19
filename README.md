@@ -13,7 +13,7 @@ This repository has a working section-based generation pipeline.
 - DeepSeek is called once per section to keep each JSON response within its output budget.
 - A section is published only when at least two articles pass the 800-1500 character quality gate.
 - Rejected drafts and their actual character counts are recorded in `runs/<date>/quality-rejections.json`.
-- Google TTS creates one complete MP3 per article, splitting input into chunks of at most 4000 UTF-8 bytes.
+- Google TTS creates one complete MP3 per article, splitting input into chunks of at most 4000 UTF-8 bytes. If the Chirp 3 HD voice fails, the whole article is retried with the original `cmn-CN-Wavenet-A` voice.
 - News content and MP3 files are generated artifacts and should not be committed to git.
 
 ## Stack
@@ -77,10 +77,12 @@ The first public test can use the workers.dev URL. Buy and bind a domain only af
 
 ## Daily Schedule
 
-The workflow is designed for Vancouver time. It runs after the previous day's news window has closed:
+The workflow is designed for Vancouver time and publishes automatically from the default branch. It runs after the previous day's news window has closed:
 
 - Target window: previous calendar day in `America/Vancouver`
-- Default daily generation: about 05:17 Vancouver time
+- Scheduled run: 12:17 UTC, about 05:17 during Vancouver daylight time and 04:17 during standard time
+- Scheduled runs automatically deploy the Worker and upload the generated site and MP3 files to R2
+- GitHub concurrency prevents two publication runs from overlapping, and Healthchecks.io can alert when a run fails or never arrives
 - Retention: only the most recent 5 publication days are served
 
 ## Source Policy

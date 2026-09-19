@@ -686,7 +686,38 @@ class TtsTests(unittest.TestCase):
         self.assertEqual(2, fake_client.calls)
         sleep.assert_called_once_with(5.0)
 
-    def test_synthesize_tts_skips_article_after_retries_are_exhausted(self):
+    @patch.dict(
+        os.environ,
+        {"TTS_VOICE": "cmn-CN-Chirp3-HD-Achernar", "TTS_FALLBACK_VOICE": "cmn-CN-Wavenet-A"},
+    )
+    def test_synthesize_tts_falls_back_to_original_voice(self):
+        from google.api_core import exceptions as google_exceptions
+
+        frame = bytes.fromhex("fffb9000") + bytes(413)
+
+        class FakeClient:
+            def __init__(self):
+                self.voices = []
+
+            def synthesize_speech(self, input, voice, audio_config):
+                self.voices.append(voice.name)
+                if voice.name == "cmn-CN-Chirp3-HD-Achernar":
+                    raise google_exceptions.InvalidArgument("voice unavailable")
+                return type("Response", (), {"audio_content": frame * 5})()
+
+        fake_client = FakeClient()
+        sections = [{"topic": "technology", "news_items": [{"id": "fallback", "tts_text": "回退测试。" * 20}]}]
+        with tempfile.TemporaryDirectory() as temp_name:
+            with patch.object(pipeline, "GENERATED", Path(temp_name)):
+                with patch("google.cloud.texttospeech.TextToSpeechClient", return_value=fake_client):
+                    pipeline.synthesize_tts(sections, "2026-09-16")
+            item = sections[0]["news_items"][0]
+            self.assertTrue((Path(temp_name) / item["audio_path"]).exists())
+        self.assertEqual(["cmn-CN-Chirp3-HD-Achernar", "cmn-CN-Wavenet-A"], fake_client.voices)
+        self.assertEqual("cmn-CN-Wavenet-A", item["audio_voice"])
+        self.assertTrue(item["audio_fallback_used"])
+
+    def test_synthesize_tts_skips_article_after_primary_and_fallback_retries_are_exhausted(self):
         from google.api_core import exceptions as google_exceptions
 
         class FakeClient:
@@ -708,7 +739,7 @@ class TtsTests(unittest.TestCase):
         item = sections[0]["news_items"][0]
         self.assertEqual("", item["audio_path"])
         self.assertIn("ServiceUnavailable", item["audio_error"])
-        self.assertEqual(2, fake_client.calls)
+        self.assertEqual(4, fake_client.calls)
 
     def test_synthesize_tts_skips_article_on_invalid_argument(self):
         from google.api_core import exceptions as google_exceptions
