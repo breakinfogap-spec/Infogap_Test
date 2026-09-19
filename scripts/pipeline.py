@@ -27,11 +27,64 @@ SOURCE_REF_RE = re.compile(r"\[S(\d+)\]")
 URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
 BULLET_RE = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)", re.MULTILINE)
 DASH_RE = re.compile(r"[—–]|--")
-LOCAL_SOURCE_IDS = {"global_bc", "cbc_bc", "bc_news", "vancouver_news", "vancouver_grants", "vancouver_consultations", "translink"}
+LOCAL_VANCOUVER_SEARCH_SOURCE_ID = "google_news_vancouver"
+LOCAL_VANCOUVER_FOCUS_TERMS = (
+    "affordability",
+    "budget",
+    "budgets",
+    "bus",
+    "bylaw",
+    "city council",
+    "council",
+    "crime",
+    "construction",
+    "development",
+    "education",
+    "election",
+    "elections",
+    "emergency",
+    "government",
+    "health",
+    "homeless",
+    "hospital",
+    "hospitals",
+    "housing",
+    "mayor",
+    "mla",
+    "police",
+    "policy",
+    "policies",
+    "politics",
+    "public safety",
+    "rent",
+    "renter",
+    "renters",
+    "rents",
+    "school",
+    "schools",
+    "service",
+    "services",
+    "shelter",
+    "skytrain",
+    "tax",
+    "taxes",
+    "traffic",
+    "transit",
+    "transportation",
+    "road",
+    "roads",
+    "street",
+    "streets",
+    "wage",
+    "worker",
+    "workers",
+    "zoning",
+)
 MIN_NEWS_CHARS = 800
 MAX_NEWS_CHARS = 1500
 MIN_NEWS_ITEMS_PER_SECTION = 1
 MAX_NEWS_ITEMS_PER_SECTION = 3
+MAX_PROMPT_CANDIDATES_PER_SECTION = 24
 MAX_HEADINGS_PER_ITEM = 2
 TTS_CHUNK_MAX_BYTES = 4000
 TTS_SENTENCE_MAX_BYTES = 900
@@ -191,10 +244,12 @@ def collect_candidates(
             debug["date_matches"] += 1
             candidate_date = local_published.date().isoformat() if local_published else date_text
             fallback_age_days = max((dt.date.fromisoformat(date_text) - dt.date.fromisoformat(candidate_date)).days, 0)
+            entry_source = entry.get("source") or {}
+            publisher_name = str(entry_source.get("title") or "").strip() if isinstance(entry_source, dict) else ""
             candidates.append(
                 {
                     "source_id": source["id"],
-                    "source_name": source["name"],
+                    "source_name": publisher_name if source.get("publisher_from_entry") and publisher_name else source["name"],
                     "topic_candidates": source.get("topics", []),
                     "geography": source.get("geography"),
                     "title": entry.get("title", "").strip(),
@@ -242,6 +297,14 @@ def candidate_text(candidate: dict) -> str:
         str(candidate.get(field) or "")
         for field in ("source_name", "title", "summary", "geography", "source_id")
     ).lower()
+
+
+def local_vancouver_focus_count(candidate: dict) -> int:
+    text = candidate_text(candidate)
+    return sum(
+        bool(re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text))
+        for term in LOCAL_VANCOUVER_FOCUS_TERMS
+    )
 
 
 def candidate_priority(candidate: dict, topic: str = "") -> tuple[int, int, int, str]:
@@ -336,12 +399,11 @@ def normalize_topic_id(value: object, site: dict) -> str:
 
 def add_local_topic_if_needed(candidate: dict) -> list[str]:
     topics = set(candidate.get("topic_candidates") or [])
-    geography = str(candidate.get("geography") or "").lower()
     source_id = str(candidate.get("source_id") or "")
-    haystack = f"{candidate.get('source_name', '')} {candidate.get('title', '')} {candidate.get('summary', '')}".lower()
-    local_terms = ("vancouver", "metro vancouver", "british columbia", " b.c.", "bc ", "b.c.")
-    if source_id in LOCAL_SOURCE_IDS or "vancouver" in geography or any(term in haystack for term in local_terms):
+    if source_id == LOCAL_VANCOUVER_SEARCH_SOURCE_ID:
         topics.add("local_vancouver")
+    else:
+        topics.discard("local_vancouver")
     return sorted(topics)
 
 
@@ -372,8 +434,6 @@ def number_candidates(candidates: list[dict], site: dict) -> list[dict]:
                 "previously_used": candidate.get("previously_used", False),
             }
         )
-        if len(numbered) >= 80:
-            break
     return numbered
 
 
@@ -396,6 +456,26 @@ def candidates_for_prompt(candidates: list[dict]) -> list[dict]:
 
 def candidates_for_section(candidates: list[dict], topic: str) -> list[dict]:
     topic_candidates = [candidate for candidate in candidates if topic in candidate.get("topic_candidates", [])]
+    if topic == "local_vancouver":
+        topic_candidates = [
+            candidate
+            for candidate in topic_candidates
+            if candidate.get("source_id") == LOCAL_VANCOUVER_SEARCH_SOURCE_ID
+            and local_vancouver_focus_count(candidate) > 0
+        ]
+        return sorted(
+            topic_candidates,
+            key=lambda candidate: (
+                -local_vancouver_focus_count(candidate),
+                candidate_priority(candidate, topic),
+            ),
+        )
+    if topic == "living":
+        topic_candidates = [
+            candidate
+            for candidate in topic_candidates
+            if candidate.get("geography") not in {"bc_province", "vancouver_city", "metro_vancouver"}
+        ]
     return sorted(topic_candidates, key=lambda candidate: candidate_priority(candidate, topic))
 
 
@@ -431,7 +511,7 @@ def call_deepseek_for_sections(
         topic_id = topic["id"]
         if target_topics is not None and topic_id not in target_topics:
             continue
-        topic_candidates = candidates_for_section(numbered_candidates, topic_id)
+        topic_candidates = candidates_for_section(numbered_candidates, topic_id)[:MAX_PROMPT_CANDIDATES_PER_SECTION]
         if len(topic_candidates) < MIN_NEWS_ITEMS_PER_SECTION:
             log_quality_rejection(
                 rejections,

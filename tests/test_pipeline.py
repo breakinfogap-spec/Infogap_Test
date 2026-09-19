@@ -116,6 +116,87 @@ class SourceCollectionTests(unittest.TestCase):
         self.assertEqual(1, pipeline.collect_candidates.last_debug[0]["date_matches"])
         self.assertEqual("", pipeline.collect_candidates.last_debug[0]["error"])
 
+    def test_uses_original_publisher_name_from_google_news_entry(self):
+        rss = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0"><channel><title>Google News</title>
+        <item><title>Vancouver council approves housing plan</title>
+        <link>https://news.google.com/rss/articles/example</link>
+        <pubDate>Thu, 17 Sep 2026 18:00:00 GMT</pubDate>
+        <description>Housing and city policy</description>
+        <source url="https://example.com">CityNews Vancouver</source></item>
+        </channel></rss>"""
+        registry = {
+            "sources": [
+                {
+                    "id": "google_news_vancouver",
+                    "name": "Google News — Vancouver search",
+                    "topics": ["local_vancouver"],
+                    "geography": "metro_vancouver",
+                    "feed_url": "https://news.google.com/rss/search?q=Vancouver%20news",
+                    "publisher_from_entry": True,
+                    "enabled": True,
+                }
+            ]
+        }
+        with patch.object(pipeline.requests, "get", return_value=FakeFeedResponse(rss)):
+            candidates = pipeline.collect_candidates(registry, "2026-09-17", "America/Vancouver")
+        self.assertEqual("CityNews Vancouver", candidates[0]["source_name"])
+
+
+class LocalVancouverCandidateTests(unittest.TestCase):
+    def test_local_section_only_uses_civic_google_news_search_results(self):
+        civic = source(topic="local_vancouver")
+        civic.update(
+            source_id="google_news_vancouver",
+            title="Vancouver city council approves new housing policy",
+            geography="metro_vancouver",
+        )
+        sports = source(ref="S2", topic="local_vancouver")
+        sports.update(
+            source_id="google_news_vancouver",
+            title="Vancouver Canucks announce training camp roster",
+            geography="metro_vancouver",
+        )
+        business_noise = source(ref="S4", topic="local_vancouver")
+        business_noise.update(
+            source_id="google_news_vancouver",
+            source_name="Business in Vancouver",
+            title="Vancouver company announces new product",
+            geography="metro_vancouver",
+        )
+        direct_feed = source(ref="S3", topic="local_vancouver")
+        direct_feed.update(
+            source_id="cbc_bc",
+            title="Vancouver transit budget debate",
+            geography="bc_province",
+        )
+        selected = pipeline.candidates_for_section([sports, business_noise, direct_feed, civic], "local_vancouver")
+        self.assertEqual(["Vancouver city council approves new housing policy"], [item["title"] for item in selected])
+
+    def test_bc_local_candidates_do_not_leak_into_federal_living_section(self):
+        local = source(topic="living")
+        local.update(source_id="cbc_bc", geography="bc_province", title="Vancouver housing policy")
+        federal = source(ref="S2", topic="living")
+        federal.update(source_id="cbc_top", geography="canada_national", title="Federal housing policy")
+        selected = pipeline.candidates_for_section([local, federal], "living")
+        self.assertEqual(["Federal housing policy"], [item["title"] for item in selected])
+
+    def test_numbering_keeps_sources_that_appear_after_many_google_results(self):
+        google_results = []
+        for index in range(90):
+            item = source(ref=f"G{index}", topic="local_vancouver")
+            item.update(
+                source_id="google_news_vancouver",
+                url=f"https://news.google.com/rss/articles/{index}",
+                geography="metro_vancouver",
+                title=f"Vancouver housing policy update {index}",
+            )
+            google_results.append(item)
+        finance = source(ref="F1", topic="finance")
+        finance["url"] = "https://example.com/finance/after-search-results"
+        numbered = pipeline.number_candidates(google_results + [finance], site("finance", "local_vancouver"))
+        self.assertIn(finance["url"], [item["url"] for item in numbered])
+
 
 class QualityGateTests(unittest.TestCase):
     def test_accepts_two_articles_between_800_and_1500_chars(self):

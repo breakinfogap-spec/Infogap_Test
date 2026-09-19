@@ -1,4 +1,4 @@
-name: Official Source Validation
+name: Vancouver News Search Validation
 
 on:
   workflow_dispatch:
@@ -20,9 +20,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install -r requirements.txt
-      - name: Validate BC and Vancouver official feeds
+      - name: Validate Vancouver News search feed
         run: >-
           python scripts/pipeline.py
           --date "${{ github.event.inputs.date }}"
-          --validate-source bc_news
-          --validate-source vancouver_news
+          --validate-source google_news_vancouver
