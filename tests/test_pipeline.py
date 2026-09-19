@@ -28,6 +28,14 @@ class FakeResponse:
         return self.payload
 
 
+class FakeFeedResponse:
+    def __init__(self, content):
+        self.content = content
+
+    def raise_for_status(self):
+        return None
+
+
 def source(ref="S1", topic="technology"):
     return {
         "ref": ref,
@@ -76,6 +84,37 @@ class DateInputTests(unittest.TestCase):
     def test_rejects_invalid_workflow_date(self):
         with self.assertRaisesRegex(ValueError, "Use YYYY-MM-DD"):
             pipeline.normalize_date_text("09/17/2026")
+
+
+class SourceCollectionTests(unittest.TestCase):
+    def test_uses_browser_compatible_infogap_user_agent_and_records_debug_counts(self):
+        rss = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0"><channel><title>Official News</title>
+        <item><title>Test story</title><link>https://example.com/story</link>
+        <pubDate>Thu, 17 Sep 2026 18:00:00 GMT</pubDate><description>Summary</description></item>
+        </channel></rss>"""
+        registry = {
+            "sources": [
+                {
+                    "id": "bc_news",
+                    "name": "BC Gov News",
+                    "topics": ["living"],
+                    "geography": "bc_province",
+                    "feed_url": "https://news.gov.bc.ca/feed",
+                    "enabled": True,
+                }
+            ]
+        }
+        with patch.object(pipeline.requests, "get", return_value=FakeFeedResponse(rss)) as request:
+            candidates = pipeline.collect_candidates(registry, "2026-09-17", "America/Vancouver")
+        self.assertEqual(1, len(candidates))
+        self.assertEqual(
+            "Mozilla/5.0 (compatible; InfoGapBot/1.0; +https://github.com/breakinfogap-spec/Infogap_Test)",
+            request.call_args.kwargs["headers"]["User-Agent"],
+        )
+        self.assertEqual(1, pipeline.collect_candidates.last_debug[0]["entries"])
+        self.assertEqual(1, pipeline.collect_candidates.last_debug[0]["date_matches"])
+        self.assertEqual("", pipeline.collect_candidates.last_debug[0]["error"])
 
 
 class QualityGateTests(unittest.TestCase):

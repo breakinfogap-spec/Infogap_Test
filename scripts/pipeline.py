@@ -167,7 +167,9 @@ def collect_candidates(
         try:
             response = requests.get(
                 source["feed_url"],
-                headers={"User-Agent": "InfoGapTest/0.1 (+https://github.com/breakinfogap-spec/Infogap_Test)"},
+                headers={
+                    "User-Agent": "Mozilla/5.0 (compatible; InfoGapBot/1.0; +https://github.com/breakinfogap-spec/Infogap_Test)"
+                },
                 timeout=8,
             )
             response.raise_for_status()
@@ -1542,11 +1544,42 @@ def main() -> int:
     parser.add_argument("--use-llm", action="store_true")
     parser.add_argument("--review", action="store_true")
     parser.add_argument("--tts", action="store_true")
+    parser.add_argument("--validate-source", action="append", default=[])
     args = parser.parse_args()
     publication_date = normalize_date_text(args.date)
 
     site = load_json(ROOT / "config" / "site.json")
     source_registry = load_json(ROOT / "config" / "source-registry.json")
+    if args.validate_source:
+        requested_source_ids = set(args.validate_source)
+        collection_registry = {
+            **source_registry,
+            "sources": [
+                source for source in source_registry.get("sources", []) if source.get("id") in requested_source_ids
+            ],
+        }
+        candidates = collect_candidates(collection_registry, publication_date, site["timezone"])
+        debug_by_id = {item["id"]: item for item in collect_candidates.last_debug}
+        requested_results = [
+            debug_by_id.get(source_id, {"id": source_id, "entries": 0, "date_matches": 0, "error": "source_not_enabled_or_missing"})
+            for source_id in args.validate_source
+        ]
+        print(json.dumps({"source_debug": requested_results}, ensure_ascii=False, indent=2))
+        failed_sources = [
+            item["id"] for item in requested_results if item.get("error") or int(item.get("entries") or 0) <= 0
+        ]
+        if failed_sources:
+            print(
+                json.dumps(
+                    {"ok": False, "error": "Source validation failed.", "failed_sources": failed_sources},
+                    ensure_ascii=False,
+                ),
+                file=sys.stderr,
+            )
+            return 1
+        print(json.dumps({"ok": True, "validated_sources": args.validate_source}, ensure_ascii=False))
+        return 0
+
     candidates = collect_candidates_for_publication(source_registry, publication_date, site["timezone"])
 
     if not candidates and not args.allow_empty:

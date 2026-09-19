@@ -15,13 +15,13 @@
       ],
       "geography": "vancouver_city",
       "entry_url": "https://vancouver.ca/news-calendar/news.aspx",
-      "feed_url": null,
+      "feed_url": "https://vancouver.ca/news-calendar/vancouver-news.rss",
       "role": "news",
       "entry_check": "readable",
-      "automation_check": "http_403",
-      "usage_review": "pending",
-      "enabled": false,
-      "notes": "网页工具读取成功；本地 Python 普通请求 HTTP 403。具体 RSS 地址与合规获取方式仍待验证。"
+      "automation_check": "actions_ubuntu_validation_pending_2026-09-18",
+      "usage_review": "official_rss_summary_and_links_only",
+      "enabled": true,
+      "notes": "官方 News 页面明确提供 RSS，feed 为 https://vancouver.ca/news-calendar/vancouver-news.rss。2026-09-18 本地 Windows Python 使用 InfoGapBot 浏览器兼容 UA 后仍返回 HTTP 403；本地结果不作为停用依据，等待 GitHub Actions Ubuntu 验证。"
     },
     {
       "id": "vancouver_grants",
@@ -35,7 +35,7 @@
       "feed_url": null,
       "role": "benefits_and_grants",
       "entry_check": "readable",
-      "automation_check": "not_tested",
+      "automation_check": "not_tested_in_local_or_actions",
       "usage_review": "pending",
       "enabled": false,
       "notes": "资格需逐项目核实；目录中的组织资助不能写成普遍居民福利。"
@@ -51,7 +51,7 @@
       "feed_url": null,
       "role": "public_consultation",
       "entry_check": "shell_only",
-      "automation_check": "project_extraction_unverified",
+      "automation_check": "local_project_extraction_unverified_2026-09-14",
       "usage_review": "pending",
       "enabled": false,
       "notes": "温哥华官网链接的平台已确认；当前网页提取只有外壳，不能宣称项目与截止信息可自动获取。"
@@ -67,13 +67,13 @@
       ],
       "geography": "bc_province",
       "entry_url": "https://news.gov.bc.ca/connect",
-      "feed_url": null,
+      "feed_url": "https://news.gov.bc.ca/feed",
       "role": "news_and_policy",
       "entry_check": "readable",
-      "automation_check": "local_tls_certificate_error",
-      "usage_review": "pending",
-      "enabled": false,
-      "notes": "页面列出 RSS 入口；本机 Python 证书链验证失败。修复信任链，不关闭 TLS 校验。具体 feed 解析待验证。"
+      "automation_check": "actions_ubuntu_validation_pending_2026-09-18",
+      "usage_review": "official_rss_summary_and_links_only",
+      "enabled": true,
+      "notes": "BC Gov News 官方 Connect 页面链接的全站 feed 为 https://news.gov.bc.ca/feed。2026-09-18 本地 Windows Python 返回 SSLCertVerificationError，未关闭 TLS 校验；本地结果不作为停用依据，等待 GitHub Actions Ubuntu 干净环境验证。"
     },
     {
       "id": "bc_consultations",
@@ -86,7 +86,7 @@
       "feed_url": null,
       "role": "public_consultation",
       "entry_check": "readable",
-      "automation_check": "not_tested",
+      "automation_check": "not_tested_in_local_or_actions",
       "usage_review": "pending",
       "enabled": false,
       "notes": "BC 政府官方订阅页链接；逐项目验证征询阶段、适用范围及截止时间。"
@@ -103,7 +103,7 @@
       "feed_url": null,
       "role": "news_and_policy",
       "entry_check": "readable",
-      "automation_check": "not_tested",
+      "automation_check": "not_tested_in_local_or_actions",
       "usage_review": "pending",
       "enabled": false,
       "notes": "列治文辖区；不自动套用于温哥华市居民。"
@@ -120,7 +120,7 @@
       "feed_url": null,
       "role": "news_and_policy",
       "entry_check": "readable",
-      "automation_check": "not_tested",
+      "automation_check": "not_tested_in_local_or_actions",
       "usage_review": "pending",
       "enabled": false,
       "notes": "素里辖区；日期提取与正文获取待验证。"
@@ -136,7 +136,7 @@
       "feed_url": null,
       "role": "transport",
       "entry_check": "readable_in_prior_research",
-      "automation_check": "not_tested",
+      "automation_check": "not_tested_in_local_or_actions",
       "usage_review": "pending",
       "enabled": false,
       "notes": "区分大温交通服务范围与市级政策；不把实时短暂故障当成已过期的次日行动建议。"
@@ -153,7 +153,7 @@
       "feed_url": null,
       "role": "benefits_and_grants",
       "entry_check": "readable",
-      "automation_check": "not_tested",
+      "automation_check": "not_tested_in_local_or_actions",
       "usage_review": "pending",
       "enabled": false,
       "notes": "目录用于发现政策与资格页面；初次发现旧项目不是昨日发布。"
@@ -170,7 +170,7 @@
       "feed_url": null,
       "role": "immigration_policy",
       "entry_check": "readable",
-      "automation_check": "not_tested",
+      "automation_check": "not_tested_in_local_or_actions",
       "usage_review": "pending",
       "enabled": false,
       "notes": "必须连同政策条件及生效日期取证；新闻稿不替代项目完整规则。"
@@ -186,7 +186,7 @@
       "feed_url": "https://www.bankofcanada.ca/feed/",
       "role": "economic_policy",
       "entry_check": "readable",
-      "automation_check": "rss_verified_2026-09-15",
+      "automation_check": "local_windows_rss_verified_2026-09-15",
       "usage_review": "rss_summary_and_links_only",
       "enabled": true,
       "notes": "公开 RSS 可读取；用于加拿大金融政策候选发现。若无发布日期则由 pipeline 保留候选并在分析中谨慎处理。"
@@ -203,7 +203,7 @@
       "feed_url": null,
       "role": "statistics",
       "entry_check": "readable",
-      "automation_check": "not_tested",
+      "automation_check": "not_tested_in_local_or_actions",
       "usage_review": "pending",
       "enabled": false,
       "notes": "开发者入口已确认；具体 The Daily 或数据 API 端点待登记。"
@@ -219,7 +219,7 @@
       "feed_url": "https://www.federalreserve.gov/feeds/press_all.xml",
       "role": "economic_policy",
       "entry_check": "readable",
-      "automation_check": "rss_verified_2026-09-15",
+      "automation_check": "local_windows_rss_verified_2026-09-15",
       "usage_review": "rss_summary_and_links_only",
       "enabled": true,
       "notes": "公开 RSS 可读取；美国政策需解释对加拿大普通人的间接影响，不直接套用。"
@@ -236,7 +236,7 @@
       "feed_url": null,
       "role": "statistics",
       "entry_check": "readable",
-      "automation_check": "not_tested",
+      "automation_check": "not_tested_in_local_or_actions",
       "usage_review": "pending",
       "enabled": false,
       "notes": "具体 feed 解析待验证；保留地区、计量口径与发布时点。"
@@ -252,7 +252,7 @@
       "feed_url": "https://feeds.arstechnica.com/arstechnica/index",
       "role": "independent_reporting",
       "entry_check": "readable",
-      "automation_check": "rss_verified_2026-09-15",
+      "automation_check": "local_windows_rss_verified_2026-09-15",
       "usage_review": "rss_summary_and_links_only",
       "enabled": true,
       "notes": "公开 RSS 可读取；用于科技候选发现，正文分析必须引用原文链接，不复制全文。"
@@ -271,7 +271,7 @@
       "feed_url": "https://globalnews.ca/bc/feed/",
       "role": "independent_reporting",
       "entry_check": "readable",
-      "automation_check": "rss_verified_2026-09-15",
+      "automation_check": "local_windows_rss_verified_2026-09-15",
       "usage_review": "rss_summary_and_links_only",
       "enabled": true,
       "notes": "公开 RSS 可读取；用于 BC/温哥华相关候选发现，正文分析必须引用原文链接，不复制全文。"
@@ -290,7 +290,7 @@
       "feed_url": "https://www.cbc.ca/cmlink/rss-canada-britishcolumbia",
       "role": "independent_reporting",
       "entry_check": "web_tool_fetch_failed",
-      "automation_check": "rss_verified_2026-09-15",
+      "automation_check": "local_windows_rss_verified_2026-09-15",
       "usage_review": "rss_summary_and_links_only",
       "enabled": true,
       "notes": "公开 RSS 可读取；用于 BC/温哥华相关候选发现，正文分析必须引用原文链接，不复制全文。"
@@ -309,7 +309,7 @@
       "feed_url": "http://feeds.bbci.co.uk/news/world/rss.xml",
       "role": "independent_reporting",
       "entry_check": "web_tool_robots_denied",
-      "automation_check": "rss_verified_2026-09-15",
+      "automation_check": "local_windows_rss_verified_2026-09-15",
       "usage_review": "rss_summary_and_links_only",
       "enabled": true,
       "notes": "RSS 可读取；用于国际新闻候选发现。若网页正文受限，只使用 RSS 元数据和可访问引用，不绕过限制。"
@@ -325,7 +325,7 @@
       "feed_url": null,
       "role": "immigration_policy",
       "entry_check": "web_tool_fetch_failed",
-      "automation_check": "not_tested",
+      "automation_check": "not_tested_in_local_or_actions",
       "usage_review": "pending",
       "enabled": false,
       "notes": "本次网页工具未能打开；官方候选尚未通过。政策是否适用须以带日期的原始公告和项目规则核实。"
@@ -344,7 +344,7 @@
       "feed_url": "https://www.cbc.ca/cmlink/rss-topstories",
       "role": "independent_reporting",
       "entry_check": "rss_verified",
-      "automation_check": "rss_verified_2026-09-15",
+      "automation_check": "local_windows_rss_verified_2026-09-15",
       "usage_review": "rss_summary_and_links_only",
       "enabled": true,
       "notes": "公开 RSS 可读取；用于加拿大全国候选发现。"
@@ -361,7 +361,7 @@
       "feed_url": "https://www.cbc.ca/cmlink/rss-business",
       "role": "independent_reporting",
       "entry_check": "rss_verified",
-      "automation_check": "rss_verified_2026-09-15",
+      "automation_check": "local_windows_rss_verified_2026-09-15",
       "usage_review": "rss_summary_and_links_only",
       "enabled": true,
       "notes": "公开 RSS 可读取；用于金融与民生候选发现。"
@@ -377,7 +377,7 @@
       "feed_url": "https://www.cbc.ca/cmlink/rss-technology",
       "role": "independent_reporting",
       "entry_check": "rss_verified",
-      "automation_check": "rss_verified_2026-09-15",
+      "automation_check": "local_windows_rss_verified_2026-09-15",
       "usage_review": "rss_summary_and_links_only",
       "enabled": true,
       "notes": "公开 RSS 可读取；用于科技候选发现。"
@@ -396,7 +396,7 @@
       "feed_url": "https://www.cbc.ca/cmlink/rss-world",
       "role": "independent_reporting",
       "entry_check": "rss_verified",
-      "automation_check": "rss_verified_2026-09-15",
+      "automation_check": "local_windows_rss_verified_2026-09-15",
       "usage_review": "rss_summary_and_links_only",
       "enabled": true,
       "notes": "公开 RSS 可读取；用于国际新闻候选发现，并按加拿大普通人视角分析。"
@@ -415,7 +415,7 @@
       "feed_url": "https://globalnews.ca/canada/feed/",
       "role": "independent_reporting",
       "entry_check": "rss_verified",
-      "automation_check": "rss_verified_2026-09-15",
+      "automation_check": "local_windows_rss_verified_2026-09-15",
       "usage_review": "rss_summary_and_links_only",
       "enabled": true,
       "notes": "公开 RSS 可读取；用于加拿大全国候选发现。"
@@ -434,7 +434,7 @@
       "feed_url": "https://globalnews.ca/world/feed/",
       "role": "independent_reporting",
       "entry_check": "rss_verified",
-      "automation_check": "rss_verified_2026-09-15",
+      "automation_check": "local_windows_rss_verified_2026-09-15",
       "usage_review": "rss_summary_and_links_only",
       "enabled": true,
       "notes": "公开 RSS 可读取；用于国际新闻候选发现。"
