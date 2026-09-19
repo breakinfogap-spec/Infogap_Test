@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "review_date": "2026-09-14",
+  "review_date": "2026-09-18",
   "stage": "rss_test_enabled",
   "pipeline_enabled": true,
   "news_test_run_executed": false,
@@ -18,10 +18,10 @@
       "feed_url": "https://vancouver.ca/news-calendar/vancouver-news.rss",
       "role": "news",
       "entry_check": "readable",
-      "automation_check": "actions_ubuntu_validation_pending_2026-09-18",
+      "automation_check": "actions_ubuntu_python3.12_http_403_2026-09-18",
       "usage_review": "official_rss_summary_and_links_only",
-      "enabled": true,
-      "notes": "官方 News 页面明确提供 RSS，feed 为 https://vancouver.ca/news-calendar/vancouver-news.rss。2026-09-18 本地 Windows Python 使用 InfoGapBot 浏览器兼容 UA 后仍返回 HTTP 403；本地结果不作为停用依据，等待 GitHub Actions Ubuntu 验证。"
+      "enabled": false,
+      "notes": "官方 News 页面明确提供 RSS，feed 为 https://vancouver.ca/news-calendar/vancouver-news.rss。2026-09-18 本地 Windows Python 使用 InfoGapBot 浏览器兼容 UA 后返回 HTTP 403。GitHub Actions Ubuntu Run 35424386858（Python 3.12.14，测试日期 2026-09-17）同样返回 HTTPError: 403 Client Error: Forbidden，source_debug entries=0、date_matches=0，因此停用。"
     },
     {
       "id": "vancouver_grants",
@@ -70,10 +70,10 @@
       "feed_url": "https://news.gov.bc.ca/feed",
       "role": "news_and_policy",
       "entry_check": "readable",
-      "automation_check": "actions_ubuntu_validation_pending_2026-09-18",
+      "automation_check": "actions_ubuntu_python3.12_ssl_certificate_error_2026-09-18",
       "usage_review": "official_rss_summary_and_links_only",
-      "enabled": true,
-      "notes": "BC Gov News 官方 Connect 页面链接的全站 feed 为 https://news.gov.bc.ca/feed。2026-09-18 本地 Windows Python 返回 SSLCertVerificationError，未关闭 TLS 校验；本地结果不作为停用依据，等待 GitHub Actions Ubuntu 干净环境验证。"
+      "enabled": false,
+      "notes": "BC Gov News 官方 Connect 页面链接的全站 feed 为 https://news.gov.bc.ca/feed。2026-09-18 本地 Windows Python 返回 SSLCertVerificationError，未关闭 TLS 校验。GitHub Actions Ubuntu Run 35424386858（Python 3.12.14，测试日期 2026-09-17）同样返回 SSLCertVerificationError: unable to get local issuer certificate，source_debug entries=0、date_matches=0，因此停用。"
     },
     {
       "id": "bc_consultations",
