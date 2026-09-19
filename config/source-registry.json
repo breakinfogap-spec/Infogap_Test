@@ -34,11 +34,11 @@
       "feed_url": "https://news.google.com/rss/search?q=Vancouver%20news%20when%3A7d&hl=en-CA&gl=CA&ceid=CA%3Aen",
       "role": "local_news_search",
       "entry_check": "rss_verified",
-      "automation_check": "local_windows_rss_verified_2026-09-18",
+      "automation_check": "actions_ubuntu_python3.12_verified_2026-09-18",
       "usage_review": "search_metadata_and_links_only",
       "publisher_from_entry": true,
       "enabled": true,
-      "notes": "2026-09-18 在本地 Windows Python 使用 InfoGapBot UA 验证，Google News 的 Vancouver news 搜索 RSS entries=100、date_matches=17、error 为空。仅供温哥华本地 Section 发现候选；代码只保留住房、交通、治安、教育、医疗、市政、选举、预算、税务等民生与政治主题，并显示 RSS 提供的原媒体名称。"
+      "notes": "2026-09-18 在本地 Windows Python 使用 InfoGapBot UA 验证，entries=100、date_matches=17、error 为空。GitHub Actions Ubuntu Run 35425060323（Python 3.12，测试日期 2026-09-18）验证成功，entries=100、date_matches=18、error 为空。仅供温哥华本地 Section 发现候选；代码只保留住房、交通、治安、教育、医疗、市政、选举、预算、税务等民生与政治主题，并显示 RSS 提供的原媒体名称。"
     },
     {
       "id": "vancouver_grants",
