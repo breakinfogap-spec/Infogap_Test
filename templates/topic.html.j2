@@ -12,6 +12,11 @@
       <p class="meta"><a href="/">首页</a> · 发布日期：{{ section.publication_date }}</p>
       <h1 class="brand">{{ section.topic_name }}</h1>
       <p class="tagline">{{ section.overview }}</p>
+      {% if section.topic == 'living' %}
+      <p class="meta section-crosslink">如果想了解温哥华本地信息差，可以<a href="/topics/local_vancouver">点这里</a>到相关阅读。</p>
+      {% elif section.topic == 'local_vancouver' %}
+      <p class="meta section-crosslink">如果想了解加拿大更多的信息差，可以<a href="/topics/living">点这里</a>到相关阅读。</p>
+      {% endif %}
     </div>
   </header>
   <main class="wrap section-report">
