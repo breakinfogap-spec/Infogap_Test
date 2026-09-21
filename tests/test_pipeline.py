@@ -585,6 +585,22 @@ class GeminiReviewTests(unittest.TestCase):
                             [section], [self.candidate()], site("technology"), []
                         )
 
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "test"})
+    def test_gemini_402_payment_required_is_treated_as_review_unavailable(self):
+        section = self.make_section(1)
+        response = FakeResponse(
+            {},
+            status_code=402,
+            text='{"error":{"message":"Your prepayment credits are depleted","status":"RESOURCE_EXHAUSTED"}}',
+        )
+        with patch.object(pipeline.requests, "post", return_value=response):
+            with patch.object(pipeline.time, "sleep") as sleep:
+                with self.assertRaises(pipeline.GeminiReviewUnavailable):
+                    pipeline.review_with_gemini(
+                        [section], [self.candidate()], site("technology"), []
+                    )
+        sleep.assert_not_called()
+
 
 class TtsTests(unittest.TestCase):
     def test_splits_complete_text_into_chunks_under_4000_bytes(self):

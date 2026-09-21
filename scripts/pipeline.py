@@ -1190,6 +1190,21 @@ def retry_delay_seconds(response: requests.Response | None, attempt: int) -> flo
     return min(10.0 * (2 ** (attempt - 1)), 45.0)
 
 
+def is_gemini_billing_unavailable(response: requests.Response | None) -> bool:
+    if response is None:
+        return False
+    text = (response.text or "").lower()
+    return response.status_code == 402 or any(
+        marker in text
+        for marker in (
+            "payment required",
+            "prepayment credits are depleted",
+            "resource_exhausted",
+            "billing",
+        )
+    )
+
+
 def post_gemini_review(url: str, api_key: str, payload: dict) -> requests.Response:
     last_error = ""
     for attempt in range(1, GEMINI_REVIEW_MAX_ATTEMPTS + 1):
@@ -1201,14 +1216,18 @@ def post_gemini_review(url: str, api_key: str, payload: dict) -> requests.Respon
                 json=payload,
                 timeout=60,
             )
+            if is_gemini_billing_unavailable(response):
+                last_error = f"HTTP {response.status_code}: {response.text[:300]}"
+                break
             if response.status_code not in GEMINI_REVIEW_RETRY_STATUSES:
                 response.raise_for_status()
                 return response
             last_error = f"HTTP {response.status_code}: {response.text[:300]}"
-            if "prepayment credits are depleted" in response.text.lower():
-                break
         except requests.HTTPError as exc:
             status_code = exc.response.status_code if exc.response is not None else None
+            if is_gemini_billing_unavailable(exc.response):
+                last_error = f"HTTP {status_code}: {str(exc)[:300]}"
+                break
             if status_code not in GEMINI_REVIEW_RETRY_STATUSES:
                 raise
             response = exc.response
