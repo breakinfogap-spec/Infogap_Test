@@ -58,13 +58,31 @@ def site(*topics):
 
 
 def valid_item(title):
-    body = "这条新闻说明普通人的生活选择正在发生变化。[S1]" + "具体影响需要结合事实来理解。" * 52
+    body = "这条新闻说明普通人的钱包、支出和家庭预算正在发生变化。[S1]" + "具体影响需要结合事实来理解。" * 52
     body += "\n\n最后，总的来说，这项变化值得持续关注，也需要根据公开信息作出理性判断。[S1]"
     impact = (
         "这个对于加拿大普通家庭的影响是：\n"
-        "[短期]需要核对眼前的变化。[S1]\n"
-        "[中期]需要调整家庭安排。\n"
+        "[短期]需要核对眼前的支出变化。[S1]\n"
+        "[中期]需要调整家庭预算安排。\n"
         "[长期]需要关注政策与市场走向。"
+    )
+    return {
+        "title": title,
+        "summary": "一句话摘要。",
+        "body_markdown": body,
+        "impact_markdown": impact,
+        "source_refs": ["S1"],
+    }
+
+
+def non_wallet_item(title):
+    body = "这条新闻说明公共讨论和社会安排正在发生变化。[S1]" + "具体背景需要结合事实来理解。" * 52
+    body += "\n\n最后，总的来说，这项变化值得持续关注，也需要根据公开信息作出理性判断。[S1]"
+    impact = (
+        "这个对于加拿大普通家庭的影响是：\n"
+        "[短期]需要核对眼前的安排。[S1]\n"
+        "[中期]需要调整生活节奏。\n"
+        "[长期]需要关注政策与社区走向。"
     )
     return {
         "title": title,
@@ -198,6 +216,22 @@ class LocalVancouverCandidateTests(unittest.TestCase):
         self.assertIn(finance["url"], [item["url"] for item in numbered])
 
 
+class CandidatePriorityTests(unittest.TestCase):
+    def test_wallet_related_candidates_sort_ahead_within_each_section(self):
+        general = source(topic="technology")
+        general.update(ref="S2", title="AI research conference announces agenda", url="https://example.com/general")
+        wallet = source(topic="technology")
+        wallet.update(
+            ref="S1",
+            title="Meta launches new subscription AI product for small business spending",
+            url="https://example.com/wallet",
+        )
+        selected = pipeline.candidates_for_section([general, wallet], "technology")
+        self.assertEqual("https://example.com/wallet", selected[0]["url"])
+        numbered = pipeline.number_candidates([wallet], site("technology"))
+        self.assertGreater(numbered[0]["household_wallet_score"], 0)
+
+
 class QualityGateTests(unittest.TestCase):
     def test_accepts_two_articles_between_800_and_1500_chars(self):
         rejections = []
@@ -280,6 +314,18 @@ class QualityGateTests(unittest.TestCase):
         )
         self.assertEqual(1, len(reports))
         self.assertEqual(3, len(reports[0]["news_items"]))
+
+    def test_rejects_section_without_wallet_impact_anchor(self):
+        rejections = []
+        reports = pipeline.normalize_section_reports(
+            [{"topic": "technology", "news_items": [non_wallet_item("普通公共议题")]}],
+            [source()],
+            site("technology"),
+            "2026-09-16",
+            rejections,
+        )
+        self.assertEqual([], reports)
+        self.assertTrue(any(item["reason"] == "section_missing_wallet_impact_anchor" for item in rejections))
 
 
 class CandidateFallbackTests(unittest.TestCase):

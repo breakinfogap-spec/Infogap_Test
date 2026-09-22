@@ -12,7 +12,7 @@
       <p class="meta"><a href="/">首页</a> · <a href="/topics/{{ article.topic }}">{{ topic_name(article.topic, site.topics) }}</a></p>
       <h1 class="brand">{{ article.title }}</h1>
       <p class="tagline">{{ article.summary }}</p>
-      <p class="meta">发布日期：{{ article.publication_date }}</p>
+      <p class="meta">新闻日期：{{ article.publication_date }}{% if article.generated_at_local %} · 网页更新：{{ article.generated_at_local }}{% endif %}</p>
     </div>
   </header>
   <main class="wrap">

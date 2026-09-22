@@ -9,7 +9,7 @@
 <body>
   <header>
     <div class="wrap">
-      <p class="meta"><a href="/">首页</a> · 发布日期：{{ section.publication_date }}</p>
+      <p class="meta"><a href="/">首页</a> · 新闻日期：{{ section.publication_date }} · 网页更新：{{ section.generated_at_local }}</p>
       <h1 class="brand">{{ section.topic_name }}</h1>
       <p class="tagline">{{ section.overview }}</p>
       {% if section.topic == 'living' %}

@@ -118,6 +118,87 @@ FINANCE_PRIORITY_TERMS = (
     "失业",
     "房贷",
 )
+HOUSEHOLD_WALLET_TERMS = (
+    "affordability",
+    "benefit",
+    "benefits",
+    "budget",
+    "cash flow",
+    "consumer",
+    "cost",
+    "costs",
+    "credit",
+    "debt",
+    "employment",
+    "fare",
+    "fee",
+    "fees",
+    "income",
+    "inflation",
+    "insurance",
+    "interest rate",
+    "investment",
+    "investor",
+    "jobs",
+    "loan",
+    "market",
+    "mortgage",
+    "price",
+    "prices",
+    "product",
+    "rebate",
+    "rent",
+    "salary",
+    "savings",
+    "spending",
+    "stock",
+    "subscription",
+    "subsidy",
+    "tax",
+    "tuition",
+    "unemployment",
+    "wage",
+    "wallet",
+    "消费",
+    "消费者",
+    "钱包",
+    "支出",
+    "开支",
+    "花钱",
+    "省钱",
+    "现金流",
+    "成本",
+    "价格",
+    "物价",
+    "通胀",
+    "利率",
+    "房贷",
+    "租金",
+    "税",
+    "退税",
+    "补贴",
+    "福利",
+    "工资",
+    "收入",
+    "就业",
+    "失业",
+    "投资",
+    "股市",
+    "市场",
+    "储蓄",
+    "债务",
+    "贷款",
+    "保险",
+    "学费",
+    "车费",
+    "交通费",
+    "订阅",
+    "新产品",
+    "新服务",
+    "家庭预算",
+    "小企业",
+    "生意",
+)
 IMPACT_PREFIX_RE = re.compile(r"这个对于[^\n]{1,80}的影响是[：:]")
 NEWS_ANALYST_SYSTEM_PROMPT = """# System Prompt: 新闻解读员
 
@@ -299,6 +380,19 @@ def candidate_text(candidate: dict) -> str:
     ).lower()
 
 
+def household_wallet_score_text(text: str) -> int:
+    lowered = text.lower()
+    return sum(1 for term in HOUSEHOLD_WALLET_TERMS if term in lowered)
+
+
+def household_wallet_score(candidate: dict) -> int:
+    return household_wallet_score_text(candidate_text(candidate))
+
+
+def has_household_wallet_angle(*parts: str) -> bool:
+    return household_wallet_score_text(" ".join(str(part or "") for part in parts)) > 0
+
+
 def local_vancouver_focus_count(candidate: dict) -> int:
     text = candidate_text(candidate)
     return sum(
@@ -307,14 +401,15 @@ def local_vancouver_focus_count(candidate: dict) -> int:
     )
 
 
-def candidate_priority(candidate: dict, topic: str = "") -> tuple[int, int, int, str]:
+def candidate_priority(candidate: dict, topic: str = "") -> tuple[int, int, int, int, str]:
     text = candidate_text(candidate)
     fallback_age = int(candidate.get("fallback_age_days") or 0)
     previously_used = 1 if candidate.get("previously_used") else 0
+    wallet_priority = -min(household_wallet_score(candidate), 8)
     finance_priority = 0
     if topic == "finance" or "finance" in candidate.get("topic_candidates", []):
         finance_priority = -1 if any(term in text for term in FINANCE_PRIORITY_TERMS) else 0
-    return (previously_used, fallback_age, finance_priority, str(candidate.get("published_at") or ""))
+    return (previously_used, fallback_age, wallet_priority, finance_priority, str(candidate.get("published_at") or ""))
 
 
 def collect_candidates_for_publication(
@@ -432,6 +527,7 @@ def number_candidates(candidates: list[dict], site: dict) -> list[dict]:
                 "fallback_age_days": candidate.get("fallback_age_days", 0),
                 "is_publication_date": candidate.get("is_publication_date", True),
                 "previously_used": candidate.get("previously_used", False),
+                "household_wallet_score": household_wallet_score(candidate),
             }
         )
     return numbered
@@ -449,6 +545,7 @@ def candidates_for_prompt(candidates: list[dict]) -> list[dict]:
             "summary": item["summary"],
             "candidate_date": item.get("candidate_date"),
             "fallback_age_days": item.get("fallback_age_days", 0),
+            "household_wallet_score": item.get("household_wallet_score", 0),
         }
         for item in candidates
     ]
@@ -534,6 +631,8 @@ def call_deepseek_for_sections(
                     "max_news_items": MAX_NEWS_ITEMS_PER_SECTION,
                     "fallback_window": f"Use publication-date news first. If there is not enough strong material, use unused candidates from the previous {FALLBACK_LOOKBACK_DAYS} days.",
                     "finance_priority": "For finance, prioritize Bank of Canada, Federal Reserve, interest rates, inflation/CPI, jobs, unemployment, mortgages, rent, and household cash flow.",
+                    "wallet_anchor_requirement": "Every section must include at least one article whose main analysis clearly explains an ordinary-person wallet angle: consumption, prices, rent, mortgage, taxes, benefits, subsidies, wages, jobs, fees, subscriptions, product costs, small-business spending, household budget, savings, debt, or investment impact. Prefer candidates with household_wallet_score greater than 0 for that anchor article.",
+                    "technology_wallet_examples": "For technology, a wallet anchor can be a new consumer or business product, AI tool, subscription change, device/platform pricing, cybersecurity cost, productivity tool, or market/investment impact.",
                     "repair_requirement": "If this is a retry, fix the listed quality failures instead of returning a weak or empty section.",
                 },
                 "previous_quality_failures_to_fix": attempt_feedback + rejection_feedback(topic_id, rejections),
@@ -546,7 +645,7 @@ def call_deepseek_for_sections(
                     "The returned section.topic must repeat target_section.id exactly in English. Do not translate the topic id.",
                 ],
                 "writing_template": {
-                    "section_overview": "今天有 X 条新闻会对我们的生活造成影响。",
+                    "section_overview": "这一天有 X 条新闻会对我们的生活造成影响。",
                     "section_composition": "Return 1-3 distinct, evidence-backed news analyses. At least one accepted article is required for publication.",
                     "per_news_item": [
                         "A clear, forceful title that directly names the core issue or viewpoint.",
@@ -554,6 +653,7 @@ def call_deepseek_for_sections(
                         "Use full readable Chinese paragraphs, never bullet points.",
                         "Start by saying what happened in one sentence and directly explain what it means.",
                         "Use 0-2 optional Markdown ## subheadings only for genuinely distinct questions.",
+                        "At least one article in this section must make the wallet angle central, not incidental. Say plainly how it may affect spending, income, savings, investment, benefits, taxes, rent, mortgage, subscriptions, product choices, or small-business costs.",
                         "The final paragraph of body_markdown must begin with 最后，总的来说，.",
                         "Put the impact block in impact_markdown only, exactly once, and nowhere in body_markdown.",
                         "impact_markdown must start with 这个对于[具体群体]的影响是： and contain [短期], [中期], and [长期] in that order.",
@@ -565,7 +665,7 @@ def call_deepseek_for_sections(
                 "required_json_shape": {
                     "section": {
                         "topic": topic_id,
-                        "overview": "今天有 X 条新闻会对我们的生活造成影响。",
+                        "overview": "这一天有 X 条新闻会对我们的生活造成影响。",
                         "news_items": [
                             {
                                 "title": "clear Chinese headline",
@@ -591,6 +691,7 @@ def call_deepseek_for_sections(
                                 + "\n\n硬性技术规则：Return strict JSON only for the requested section. Never output source URLs. "
                                 "Only cite source refs like [S1]. Return 1-3 complete articles. "
                                 "At least one article must pass the quality gates. "
+                                "Every section needs at least one wallet-impact anchor article about ordinary people's consumption, spending, income, benefits, taxes, product costs, or investment exposure. "
                                 "Each article must be 800-1500 Chinese characters. Do not write bullet points. "
                                 "The fixed impact block belongs once at the very end of each article. "
                                 "If prior quality failures are supplied, rewrite to fix them."
@@ -873,6 +974,7 @@ def normalize_section_reports(
             combined_text = "\n".join(
                 [title, str(raw_item.get("summary") or ""), body_markdown, impact_markdown]
             )
+            wallet_impact_anchor = has_household_wallet_angle(combined_text)
             if has_source_url(combined_text):
                 log_quality_rejection(rejections, topic, "model_output_url_not_allowed", **rejection_details)
                 continue
@@ -898,6 +1000,7 @@ def normalize_section_reports(
                     "tts_text": tts_text,
                     "analysis_chars": item_char_count,
                     "heading_count": item_heading_count,
+                    "wallet_impact_anchor": wallet_impact_anchor,
                     "audio_path": "",
                 }
             )
@@ -913,6 +1016,15 @@ def normalize_section_reports(
             )
             continue
         news_items = news_items[:MAX_NEWS_ITEMS_PER_SECTION]
+        if not any(item.get("wallet_impact_anchor") for item in news_items):
+            log_quality_rejection(
+                rejections,
+                topic,
+                "section_missing_wallet_impact_anchor",
+                accepted_articles=len(news_items),
+                required_wallet_articles=1,
+            )
+            continue
 
         reports.append(
             {
@@ -920,7 +1032,7 @@ def normalize_section_reports(
                 "topic_name": topic_name(topic, site["topics"]),
                 "topic_description": topic_description(topic, site["topics"]),
                 "publication_date": date_text,
-                "overview": f"今天有 {len(news_items)} 条新闻会对我们的生活造成影响。",
+                "overview": f"这一天有 {len(news_items)} 条新闻会对我们的生活造成影响。",
                 "news_items": news_items,
                 "audio_path": "",
             }
@@ -1454,7 +1566,7 @@ def review_with_gemini(
             continue
         accepted_section = dict(section)
         accepted_section["news_items"] = accepted_items[:MAX_NEWS_ITEMS_PER_SECTION]
-        accepted_section["overview"] = f"今天有 {len(accepted_section['news_items'])} 条新闻会对我们的生活造成影响。"
+        accepted_section["overview"] = f"这一天有 {len(accepted_section['news_items'])} 条新闻会对我们的生活造成影响。"
         accepted_sections.append(accepted_section)
 
     return accepted_sections
@@ -1592,12 +1704,17 @@ def sections_for_render(site: dict, sections: list[dict], publication_date: str)
                     "topic_name": topic["name"],
                     "topic_description": topic.get("description", ""),
                     "publication_date": publication_date,
-                    "overview": "今天这个主题还没有通过事实核查的分析。",
+                    "overview": "这个主题在这一天还没有通过事实核查的分析。",
                     "news_items": [],
                     "audio_path": "",
                 }
             )
     return rendered
+
+
+def generated_at_local_label(site: dict) -> str:
+    zone = ZoneInfo(site.get("timezone", "America/Vancouver"))
+    return dt.datetime.now(zone).strftime("%Y-%m-%d %H:%M %Z")
 
 
 def render_site(site: dict, sections: list[dict], publication_date: str, preserve_audio: bool = False) -> None:
@@ -1618,6 +1735,11 @@ def render_site(site: dict, sections: list[dict], publication_date: str, preserv
     )
 
     rendered_sections = sections_for_render(site, sections, publication_date)
+    generated_at_local = generated_at_local_label(site)
+    for section in rendered_sections:
+        section["generated_at_local"] = generated_at_local
+        for item in section.get("news_items", []):
+            item["generated_at_local"] = generated_at_local
     total_count = total_news_count(rendered_sections)
     shutil.copyfile(ROOT / "templates" / "base.css", GENERATED / "base.css")
 
@@ -1626,6 +1748,7 @@ def render_site(site: dict, sections: list[dict], publication_date: str, preserv
             site=site,
             sections=rendered_sections,
             publication_date=publication_date,
+            generated_at_local=generated_at_local,
             total_news=total_count,
         ),
         encoding="utf-8",
@@ -1647,7 +1770,15 @@ def render_site(site: dict, sections: list[dict], publication_date: str, preserv
     data_dir = GENERATED / "data"
     data_dir.mkdir()
     (data_dir / "index.json").write_text(
-        json.dumps({"publication_date": publication_date, "sections": rendered_sections}, ensure_ascii=False, indent=2),
+        json.dumps(
+            {
+                "publication_date": publication_date,
+                "generated_at_local": generated_at_local,
+                "sections": rendered_sections,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
 
