@@ -1518,8 +1518,17 @@ def review_with_gemini(
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"Gemini returned invalid review JSON: {exc}") from exc
 
+    if isinstance(review_payload, list):
+        review_items = review_payload
+    elif isinstance(review_payload, dict):
+        review_items = review_payload.get("reviews", [])
+    else:
+        raise RuntimeError(f"Gemini returned unexpected review JSON type: {type(review_payload).__name__}")
+
     review_by_article = {}
-    for review in review_payload.get("reviews", []):
+    for review in review_items:
+        if not isinstance(review, dict):
+            continue
         topic = normalize_topic_id(review.get("topic"), site)
         article_id = str(review.get("article_id") or "").strip()
         if topic and article_id:

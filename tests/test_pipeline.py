@@ -593,6 +593,22 @@ class GeminiReviewTests(unittest.TestCase):
         self.assertTrue(any(item["reason"] == "gemini_evidence_review_rejected" for item in rejections))
 
     @patch.dict(os.environ, {"GEMINI_API_KEY": "test"})
+    def test_accepts_gemini_review_returned_as_plain_list(self):
+        section = self.make_section(1)
+        article_id = section["news_items"][0]["id"]
+        content = __import__("json").dumps(
+            [{"topic": "technology", "article_id": article_id, "ok": True, "reasons": []}]
+        )
+        response = FakeResponse(
+            {"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": content}]}}]}
+        )
+        with patch.object(pipeline.requests, "post", return_value=response):
+            accepted = pipeline.review_with_gemini(
+                [section], [self.candidate()], site("technology"), []
+            )
+        self.assertEqual(1, len(accepted[0]["news_items"]))
+
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "test"})
     def test_retries_gemini_429_then_succeeds(self):
         section = self.make_section(1)
         article_id = section["news_items"][0]["id"]
