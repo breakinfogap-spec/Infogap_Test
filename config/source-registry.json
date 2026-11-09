@@ -179,18 +179,17 @@
       "id": "ircc",
       "name": "IRCC — Newsroom",
       "topics": [
-        "immigration",
-        "living"
+        "immigration"
       ],
       "geography": "canada_federal",
       "entry_url": "https://www.canada.ca/en/immigration-refugees-citizenship/news.html",
-      "feed_url": null,
+      "feed_url": "https://api.io.canada.ca/io-server/gc/news/en/v2?dept=departmentofcitizenshipandimmigration&sort=publishedDate&orderBy=desc&pick=50&format=atom",
       "role": "immigration_policy",
       "entry_check": "readable",
-      "automation_check": "not_tested_in_local_or_actions",
+      "automation_check": "http_rss_verified_2026-11-09",
       "usage_review": "pending",
-      "enabled": false,
-      "notes": "必须连同政策条件及生效日期取证；新闻稿不替代项目完整规则。"
+      "enabled": true,
+      "notes": "官方 RSS 页面确认的 Atom 新闻端点；本地验证 50 条，保留发布日期，不将未来日期或旧通知当作昨日新政策。"
     },
     {
       "id": "bank_of_canada",
@@ -455,6 +454,21 @@
       "usage_review": "rss_summary_and_links_only",
       "enabled": true,
       "notes": "公开 RSS 可读取；用于国际新闻候选发现。"
+    },
+    {
+      "id": "cic_news",
+      "name": "CIC News — Canadian immigration",
+      "topics": [
+        "immigration"
+      ],
+      "geography": "canada_national",
+      "entry_url": "https://www.cicnews.com/",
+      "feed_url": "https://www.cicnews.com/feed/",
+      "role": "specialist_reporting",
+      "enabled": true,
+      "automation_check": "http_rss_verified_2026-11-09",
+      "usage_review": "public_feed_discovery_and_public_body_evidence_only",
+      "notes": "独立移民媒体，并非政府部门。涉及资格、费用和政策生效日期时，以原文证据为基础，不能把个人建议当作官方规定。"
     }
   ]
 }
