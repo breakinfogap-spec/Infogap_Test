@@ -49,6 +49,15 @@ class EvidenceRecoveryTests(unittest.TestCase):
 
 
 class PublicationGuardTests(unittest.TestCase):
+    def test_publication_gate_requires_review_for_every_article(self):
+        data = {"sections": [{"topic": t, "news_items": [dict(valid_item("消费价格"), wallet_impact_anchor=True,
+                    citations=[{"url": "https://example.com"}], evidence_review_passed=True)]}
+                    for t in ("finance", "technology", "living", "immigration", "local_vancouver")]}
+        publication.validate_edition(data)
+        data["sections"][0]["news_items"][0]["evidence_review_passed"] = False
+        with self.assertRaises(ValueError):
+            publication.validate_edition(data)
+
     def test_current_or_newer_editions_skip_expensive_recovery(self):
         for day in ("2026-11-08", "2026-11-09"):
             self.assertFalse(publication.needs_publication("2026-11-08", {"publication_date": day}))

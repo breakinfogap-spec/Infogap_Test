@@ -24,7 +24,10 @@ def fetch_evidence(candidate):
         # Google search metadata is not article evidence. Resolve only explicit publisher links.
         if urlparse(response.url).hostname == "news.google.com":
             soup = BeautifulSoup(response.text, "html.parser")
-            links = [a.get("href", "") for a in soup.select('a[href^="https://"]')]
+            title_words = set(re.findall(r"[a-z]{4,}", candidate.get("title", "").lower()))
+            # Never treat an unrelated navigation/advertising link as the source article.
+            links = [a.get("href", "") for a in soup.select('a[href^="https://"]')
+                     if len(title_words.intersection(re.findall(r"[a-z]{4,}", a.get_text().lower()))) >= 3]
             links = [u for u in links if not re.search(r"https://[^/]*(?:google|youtube)\.", u)]
             if not links:
                 raise ValueError("publisher_link_unavailable")

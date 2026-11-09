@@ -1896,6 +1896,11 @@ def main() -> int:
                         if topic not in c.get("excluded_topics", [])]
                 selected.update(c["url"] for c in pool[:12])
             enrich_candidates(candidates, selected, retry=round_index > 0)
+            for candidate in candidates:
+                if (candidate.get("evidence_attempts", 0) >= 2
+                        and not candidate.get("evidence_text")
+                        and len(clean_text(candidate.get("summary"))) < 200):
+                    candidate.setdefault("excluded_topics", []).extend(missing)
             before = len(quality_rejections)
             updates = call_deepseek_for_sections(
                 candidates, site, publication_date, rejections=quality_rejections,
