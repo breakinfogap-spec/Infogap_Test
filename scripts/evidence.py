@@ -11,7 +11,10 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; InfoGapBot/1.1; +https://gith
 
 
 def clean_text(value):
-    return BeautifulSoup(str(value or ""), "html.parser").get_text(" ", strip=True)
+    value = str(value or "")
+    if "<" not in value:
+        return value.strip()
+    return BeautifulSoup(value, "html.parser").get_text(" ", strip=True)
 
 
 def fetch_evidence(candidate):

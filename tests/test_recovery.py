@@ -12,6 +12,37 @@ from test_pipeline import site, valid_item, non_wallet_item, source, FakeRespons
 
 
 class EvidenceRecoveryTests(unittest.TestCase):
+    def test_main_replaces_rejected_evidence_and_retains_approved_sections(self):
+        candidates = [source(topic="finance"), source(ref="S2", topic="technology")]
+        for candidate in candidates:
+            candidate["evidence_text"] = "Publicly verified body"
+        finance = {"topic": "finance", "news_items": [{"wallet_impact_anchor": True}]}
+        technology = {"topic": "technology", "news_items": [{"wallet_impact_anchor": True}]}
+        requests_by_topic = []
+
+        def generate(*args, **kwargs):
+            requests_by_topic.append(kwargs["target_topics"])
+            return [finance, technology] if len(requests_by_topic) == 1 else [technology]
+
+        def review(sections, pool, settings, rejections):
+            if len(requests_by_topic) == 1:
+                rejections.append({"topic": "technology", "reason": "gemini_evidence_review_rejected", "source_refs": ["S2"]})
+                return [finance]
+            self.assertIn("technology", pool[1]["excluded_topics"])
+            return sections
+
+        with patch.object(sys, "argv", ["pipeline.py", "--date", "2026-11-08", "--use-llm", "--review"]), \
+             patch.object(pipeline, "load_json", side_effect=[dict(site("finance", "technology"), timezone="America/Vancouver"), {}]), \
+             patch.object(pipeline, "collect_candidates_for_publication", return_value=candidates), \
+             patch.object(pipeline, "enrich_candidates"), \
+             patch.object(pipeline, "call_deepseek_for_sections", side_effect=generate), \
+             patch.object(pipeline, "review_with_gemini", side_effect=review), \
+             patch.object(pipeline, "write_run_artifacts"), \
+             patch.object(pipeline, "annotate_cross_section_duplicates"), \
+             patch.object(pipeline, "render_site"):
+            self.assertEqual(0, pipeline.main())
+        self.assertEqual([{"finance", "technology"}, {"technology"}], requests_by_topic)
+
     def test_body_is_preserved_for_both_writer_and_reviewer(self):
         candidate = source()
         candidate.update(evidence_text="Verified article body " * 30, evidence_url="https://example.com/original")

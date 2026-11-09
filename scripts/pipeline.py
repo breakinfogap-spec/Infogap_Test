@@ -1896,6 +1896,9 @@ def main() -> int:
                         if topic not in c.get("excluded_topics", [])]
                 selected.update(c["url"] for c in pool[:12])
             enrich_candidates(candidates, selected, retry=round_index > 0)
+            print(json.dumps({"evidence_recovery": {"round": round_index + 1,
+                  "missing_sections": sorted(missing), "selected_sources": len(selected),
+                  "available_bodies": sum(bool(c.get("evidence_text")) for c in candidates)}}, ensure_ascii=False), flush=True)
             for candidate in candidates:
                 if (candidate.get("evidence_attempts", 0) >= 2
                         and not candidate.get("evidence_text")
