@@ -34,7 +34,7 @@ def fetch_evidence(candidate):
         if len(text) < 300:
             raise ValueError("article_body_unavailable")
         result.update(evidence_text=text[:12000], evidence_url=response.url, evidence_status="body")
-    except (requests.RequestException, ValueError) as exc:
+    except Exception as exc:
         result.update(evidence_status="summary_only", evidence_error=type(exc).__name__)
     result["evidence_attempts"] = int(candidate.get("evidence_attempts", 0)) + 1
     return result
