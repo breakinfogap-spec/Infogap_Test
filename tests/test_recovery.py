@@ -12,6 +12,11 @@ from test_pipeline import site, valid_item, non_wallet_item, source, FakeRespons
 
 
 class EvidenceRecoveryTests(unittest.TestCase):
+    def test_general_tourism_is_not_immigration_material(self):
+        tourist = dict(source(topic="immigration"), title="Cuba holidays cancelled", summary="Winter travel prices")
+        visa = dict(source(ref="S2", topic="immigration"), title="Canada study permit application fees", summary="Visa policy")
+        self.assertEqual([visa], pipeline.candidates_for_section([tourist, visa], "immigration"))
+
     def test_main_replaces_rejected_evidence_and_retains_approved_sections(self):
         candidates = [source(topic="finance"), source(ref="S2", topic="technology")]
         for candidate in candidates:

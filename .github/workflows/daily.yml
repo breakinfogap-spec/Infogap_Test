@@ -10,6 +10,10 @@ on:
         description: "Upload generated files to Cloudflare R2 and deploy Worker"
         type: boolean
         default: false
+      force:
+        description: "Rebuild even if this edition is already published"
+        type: boolean
+        default: false
   schedule:
     - cron: "17 12,14,16,18,20,22 * * *"
 
@@ -35,7 +39,14 @@ jobs:
       - id: check
         env:
           INPUT_DATE: ${{ inputs.date }}
-        run: python scripts/publication.py check --date "$INPUT_DATE"
+          FORCE_REBUILD: ${{ inputs.force }}
+        shell: bash
+        run: |
+          if [ "$FORCE_REBUILD" = "true" ]; then
+            python scripts/publication.py check --date "$INPUT_DATE" --force
+          else
+            python scripts/publication.py check --date "$INPUT_DATE"
+          fi
 
   generate:
     needs: freshness

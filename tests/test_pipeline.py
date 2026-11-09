@@ -443,6 +443,8 @@ class CrossSectionDuplicateTests(unittest.TestCase):
 class DeepSeekTests(unittest.TestCase):
     def candidate(self, topic, ref):
         item = source(ref=ref, topic=topic)
+        if topic == "immigration":
+            item["title"] = "Immigration visa policy"
         item.pop("ref")
         return item
 

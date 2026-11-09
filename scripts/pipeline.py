@@ -563,6 +563,9 @@ def candidates_for_prompt(candidates: list[dict]) -> list[dict]:
 
 def candidates_for_section(candidates: list[dict], topic: str) -> list[dict]:
     topic_candidates = [candidate for candidate in candidates if topic in candidate.get("topic_candidates", [])]
+    if topic == "immigration":
+        terms = r"immigra|asylum|refugee|citizenship|\bvisa\b|work permit|study permit|international student|permanent residen|deport|border policy|移民|签证|工签|学签|难民|入籍|永久居民"
+        topic_candidates = [c for c in topic_candidates if re.search(terms, candidate_text(c))]
     if topic == "local_vancouver":
         topic_candidates = [
             candidate
@@ -1481,11 +1484,16 @@ def review_with_gemini(
             "Review each article only for factual evidence quality. For every article decide whether the cited evidence "
             "actually supports the nearby claims, whether any number, amount, date, deadline, or eligibility condition "
             "is absent from the supplied evidence, and whether any conclusion makes an unsupported leap beyond the facts. "
+            "Also reject articles that do not substantively fit the section_description. Immigration must concern "
+            "immigration, visas, work/study permits, refugees, residency or citizenship; general holiday travel is not "
+            "an immigration story merely because some immigrants travel. Distinguish conditional economic analysis "
+            "from claims that specific fees, costs or eligibility have changed. "
             "Return one review result for every article. Do not assess writing style or presentation."
         ),
         "articles": [
             {
                 "topic": section["topic"],
+                "section_description": topic_description(section["topic"], site["topics"]),
                 "article_id": item["id"],
                 "title": item["title"],
                 "body_markdown": item["body_markdown"],
