@@ -46,7 +46,7 @@ def source(ref="S1", topic="technology"):
         "title": "Source title",
         "url": f"https://example.com/{topic}/{ref}",
         "published_at": "2026-09-16T10:00:00-07:00",
-        "summary": "Source summary",
+        "summary": "Source summary " * 24,
     }
 
 
@@ -162,7 +162,7 @@ class SourceCollectionTests(unittest.TestCase):
 
 
 class LocalVancouverCandidateTests(unittest.TestCase):
-    def test_local_section_only_uses_civic_google_news_search_results(self):
+    def test_local_section_prefers_direct_civic_sources(self):
         civic = source(topic="local_vancouver")
         civic.update(
             source_id="google_news_vancouver",
@@ -189,7 +189,7 @@ class LocalVancouverCandidateTests(unittest.TestCase):
             geography="bc_province",
         )
         selected = pipeline.candidates_for_section([sports, business_noise, direct_feed, civic], "local_vancouver")
-        self.assertEqual(["Vancouver city council approves new housing policy"], [item["title"] for item in selected])
+        self.assertEqual(["Vancouver transit budget debate", "Vancouver city council approves new housing policy"], [item["title"] for item in selected])
 
     def test_bc_local_candidates_do_not_leak_into_federal_living_section(self):
         local = source(topic="living")
@@ -372,7 +372,8 @@ class CandidateFallbackTests(unittest.TestCase):
                 self.assertEqual(2, lookback_days)
                 return [dict(item) for item in window_candidates]
 
-            with patch.object(pipeline, "RUNS", Path(temp_name)):
+            with patch.object(pipeline, "RUNS", Path(temp_name)), patch.object(pipeline, "load_history", return_value={}):
+                (used_run_dir / "published.json").write_text("{}")
                 with patch.object(pipeline, "collect_candidates", side_effect=fake_collect):
                     candidates = pipeline.collect_candidates_for_publication({}, "2026-09-16", "America/Vancouver", 2)
             self.assertEqual(

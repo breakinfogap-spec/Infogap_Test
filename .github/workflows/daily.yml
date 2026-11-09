@@ -5,13 +5,13 @@ on:
     inputs:
       date:
         description: "Publication date in Vancouver time, for example 2026-09-13"
-        required: true
+        required: false
       publish:
         description: "Upload generated files to Cloudflare R2 and deploy Worker"
         type: boolean
         default: false
   schedule:
-    - cron: "17 12 * * *"
+    - cron: "17 12,14,16,18,20,22 * * *"
 
 concurrency:
   group: infogap-daily-publish
@@ -22,7 +22,24 @@ permissions:
   id-token: write
 
 jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    outputs:
+      needed: ${{ steps.check.outputs.needed }}
+      date: ${{ steps.check.outputs.date }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - id: check
+        env:
+          INPUT_DATE: ${{ inputs.date }}
+        run: python scripts/publication.py check --date "$INPUT_DATE"
+
   generate:
+    needs: freshness
+    if: needs.freshness.outputs.needed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -50,6 +67,7 @@ jobs:
           path: runs
           key: infogap-runs-${{ github.run_id }}
           restore-keys: |
+            infogap-recovery-
             infogap-runs-
       - uses: actions/setup-python@v5
         with:
@@ -75,17 +93,22 @@ jobs:
       - run: npm test
       - run: python -m unittest discover -s tests
       - run: python scripts/check_config.py --mode daily
-      - name: Compute publication date
-        id: dates
+      - name: Generate and evidence-review site (automatic retry)
+        env:
+          PUBLICATION_DATE: ${{ needs.freshness.outputs.date }}
         shell: bash
         run: |
-          if [ -n "${{ github.event.inputs.date }}" ]; then
-            echo "date=${{ github.event.inputs.date }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "date=$(TZ=America/Vancouver date -d 'yesterday' +%F)" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Generate site
-        run: python scripts/pipeline.py --date "${{ steps.dates.outputs.date }}" --use-llm --review --tts
+          for attempt in 1 2; do
+            if python scripts/pipeline.py --date "$PUBLICATION_DATE" --use-llm --review --tts; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 1 ]; then sleep 20; fi
+          done
+          exit 1
+      - name: Prepare published-source ledger
+        env:
+          PUBLICATION_DATE: ${{ needs.freshness.outputs.date }}
+        run: python scripts/publication.py ledger --date "$PUBLICATION_DATE"
       - name: Upload generated site for review
         if: always()
         uses: actions/upload-artifact@v4
@@ -102,10 +125,24 @@ jobs:
         if: github.event_name == 'schedule' || github.event.inputs.publish == 'true'
         shell: bash
         run: |
-          find generated/site -type f -print0 | while IFS= read -r -d '' file; do
+          find generated/site -type f ! -path 'generated/site/index.html' ! -path 'generated/site/data/index.json' ! -path 'generated/site/data/publication-history.json' -print0 | while IFS= read -r -d '' file; do
             key="${file#generated/site/}"
             npx wrangler r2 object put "${CLOUDFLARE_R2_BUCKET}/site/${key}" --file "$file" --remote
           done
+          for key in data/publication-history.json data/index.json index.html; do
+            npx wrangler r2 object put "${CLOUDFLARE_R2_BUCKET}/site/${key}" --file "generated/site/${key}" --remote
+          done
+      - name: Mark successful publication
+        if: github.event_name == 'schedule' || github.event.inputs.publish == 'true'
+        env:
+          PUBLICATION_DATE: ${{ needs.freshness.outputs.date }}
+        run: python scripts/publication.py mark --date "$PUBLICATION_DATE"
+      - name: Save recovery history even after failure
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: runs
+          key: infogap-recovery-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Ping Healthchecks success
         if: success()
         run: python -c "import os, requests; url=os.getenv('HEALTHCHECKS_PING_URL'); requests.get(url + '/0', timeout=20) if url else None"

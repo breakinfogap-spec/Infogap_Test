@@ -15,6 +15,9 @@ import time
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from evidence import clean_text, enrich_candidates
+from publication import load_history
+
 import feedparser
 import requests
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -336,7 +339,7 @@ def collect_candidates(
                     "title": entry.get("title", "").strip(),
                     "url": entry.get("link", "").strip(),
                     "published_at": local_published.isoformat() if local_published else None,
-                    "summary": html.unescape(entry.get("summary", "")).strip(),
+                    "summary": clean_text(entry.get("summary", "")),
                     "candidate_date": candidate_date,
                     "fallback_age_days": fallback_age_days,
                     "is_publication_date": fallback_age_days == 0,
@@ -356,9 +359,9 @@ def date_text_days_ago(date_text: str, days: int) -> str:
 
 def used_source_urls(date_text: str, lookback_days: int = FALLBACK_LOOKBACK_DAYS) -> set[str]:
     urls: set[str] = set()
-    for days_ago in range(1, lookback_days):
+    for days_ago in range(1, lookback_days + 1):
         section_path = RUNS / date_text_days_ago(date_text, days_ago) / "sections.json"
-        if not section_path.exists():
+        if not (section_path.parent / "published.json").exists() or not section_path.exists():
             continue
         try:
             sections = json.loads(section_path.read_text(encoding="utf-8"))
@@ -370,6 +373,9 @@ def used_source_urls(date_text: str, lookback_days: int = FALLBACK_LOOKBACK_DAYS
                     url = str(citation.get("url") or "").strip()
                     if url.startswith("http"):
                         urls.add(url)
+    for day, published_urls in load_history().items():
+        if date_text_days_ago(date_text, lookback_days) <= day < date_text:
+            urls.update(published_urls)
     return urls
 
 
@@ -429,7 +435,7 @@ def collect_candidates_for_publication(
             continue
         fallback_age_days = int(candidate.get("fallback_age_days") or 0)
         is_previously_used = url in used_urls
-        if fallback_age_days > 0 and is_previously_used:
+        if is_previously_used:
             continue
         seen_urls.add(url)
         enriched = dict(candidate)
@@ -495,7 +501,7 @@ def normalize_topic_id(value: object, site: dict) -> str:
 def add_local_topic_if_needed(candidate: dict) -> list[str]:
     topics = set(candidate.get("topic_candidates") or [])
     source_id = str(candidate.get("source_id") or "")
-    if source_id == LOCAL_VANCOUVER_SEARCH_SOURCE_ID:
+    if source_id == LOCAL_VANCOUVER_SEARCH_SOURCE_ID or candidate.get("geography") in {"bc_province", "vancouver_city", "metro_vancouver", "richmond_city", "surrey_city"}:
         topics.add("local_vancouver")
     else:
         topics.discard("local_vancouver")
@@ -522,7 +528,10 @@ def number_candidates(candidates: list[dict], site: dict) -> list[dict]:
                 "title": str(candidate.get("title") or "").strip(),
                 "url": url,
                 "published_at": candidate.get("published_at"),
-                "summary": str(candidate.get("summary") or "").strip(),
+                "summary": clean_text(candidate.get("summary")),
+                "evidence_text": candidate.get("evidence_text", ""),
+                "evidence_url": candidate.get("evidence_url", ""),
+                "excluded_topics": candidate.get("excluded_topics", []),
                 "candidate_date": candidate.get("candidate_date"),
                 "fallback_age_days": candidate.get("fallback_age_days", 0),
                 "is_publication_date": candidate.get("is_publication_date", True),
@@ -543,6 +552,7 @@ def candidates_for_prompt(candidates: list[dict]) -> list[dict]:
             "title": item["title"],
             "published_at": item["published_at"],
             "summary": item["summary"],
+            "article_evidence": item.get("evidence_text", ""),
             "candidate_date": item.get("candidate_date"),
             "fallback_age_days": item.get("fallback_age_days", 0),
             "household_wallet_score": item.get("household_wallet_score", 0),
@@ -557,12 +567,12 @@ def candidates_for_section(candidates: list[dict], topic: str) -> list[dict]:
         topic_candidates = [
             candidate
             for candidate in topic_candidates
-            if candidate.get("source_id") == LOCAL_VANCOUVER_SEARCH_SOURCE_ID
-            and local_vancouver_focus_count(candidate) > 0
+            if local_vancouver_focus_count(candidate) > 0
         ]
         return sorted(
             topic_candidates,
             key=lambda candidate: (
+                candidate.get("source_id") == LOCAL_VANCOUVER_SEARCH_SOURCE_ID,
                 -local_vancouver_focus_count(candidate),
                 candidate_priority(candidate, topic),
             ),
@@ -608,7 +618,11 @@ def call_deepseek_for_sections(
         topic_id = topic["id"]
         if target_topics is not None and topic_id not in target_topics:
             continue
-        topic_candidates = candidates_for_section(numbered_candidates, topic_id)[:MAX_PROMPT_CANDIDATES_PER_SECTION]
+        topic_candidates = [c for c in candidates_for_section(numbered_candidates, topic_id)
+                            if topic_id not in c.get("excluded_topics", [])
+                            and (c.get("evidence_text") or len(clean_text(c.get("summary"))) >= 200)]
+        topic_candidates.sort(key=lambda c: (not bool(c.get("evidence_text")), candidate_priority(c, topic_id)))
+        topic_candidates = topic_candidates[:MAX_PROMPT_CANDIDATES_PER_SECTION]
         if len(topic_candidates) < MIN_NEWS_ITEMS_PER_SECTION:
             log_quality_rejection(
                 rejections,
@@ -633,7 +647,8 @@ def call_deepseek_for_sections(
                     "finance_priority": "For finance, prioritize Bank of Canada, Federal Reserve, interest rates, inflation/CPI, jobs, unemployment, mortgages, rent, and household cash flow.",
                     "wallet_anchor_requirement": "Every section must include at least one article whose main analysis clearly explains an ordinary-person wallet angle: consumption, prices, rent, mortgage, taxes, benefits, subsidies, wages, jobs, fees, subscriptions, product costs, small-business spending, household budget, savings, debt, or investment impact. Prefer candidates with household_wallet_score greater than 0 for that anchor article.",
                     "technology_wallet_examples": "For technology, a wallet anchor can be a new consumer or business product, AI tool, subscription change, device/platform pricing, cybersecurity cost, productivity tool, or market/investment impact.",
-                    "repair_requirement": "If this is a retry, fix the listed quality failures instead of returning a weak or empty section.",
+                    "repair_requirement": "If this is a retry, fix the listed failures. Choose ONE strongest fully evidenced story, preferably a different unused candidate. Target 1050-1250 Chinese characters, counted without whitespace, headings and citation refs. Do not pad facts or invent numbers.",
+                    "evidence_requirement": "Use article_evidence as the primary evidence, summary only as limited metadata. Clearly label conditional reasoning as analysis. Never present possible costs, fees, timelines or eligibility as established facts without supporting evidence. An honest uncertainty and practical checks are better than invented detail.",
                 },
                 "previous_quality_failures_to_fix": attempt_feedback + rejection_feedback(topic_id, rejections),
                 "editorial_rules": site["editorial_rules"],
@@ -692,7 +707,7 @@ def call_deepseek_for_sections(
                                 "Only cite source refs like [S1]. Return 1-3 complete articles. "
                                 "At least one article must pass the quality gates. "
                                 "Every section needs at least one wallet-impact anchor article about ordinary people's consumption, spending, income, benefits, taxes, product costs, or investment exposure. "
-                                "Each article must be 800-1500 Chinese characters. Do not write bullet points. "
+                                "Each article must be 800-1500 Chinese characters, aim for 1100-1250 to avoid underlength. Prefer ONE complete article over two short ones. Do not write bullet points. "
                                 "The fixed impact block belongs once at the very end of each article. "
                                 "If prior quality failures are supplied, rewrite to fix them."
                             ),
@@ -891,7 +906,8 @@ def citations_for_refs(refs: list[str], source_by_ref: dict[str, dict]) -> list[
             {
                 "ref": ref,
                 "title": source.get("title") or source.get("source_name") or ref,
-                "url": source["url"],
+                "url": source.get("evidence_url") or source["url"],
+                "discovery_url": source["url"],
                 "source_name": source.get("source_name", ""),
             }
         )
@@ -924,7 +940,7 @@ def normalize_section_reports(
             title = str(raw_item.get("title") or "").strip()
             body_markdown = limit_headings(str(raw_item.get("body_markdown") or "").strip())
             impact_markdown = str(raw_item.get("impact_markdown") or "").strip()
-            rejection_details = {"item_index": item_index, "title": title[:120]}
+            rejection_details = {"item_index": item_index, "title": title[:120], "source_refs": raw_item.get("source_refs", [])}
             body_markdown, impact_markdown, impact_was_moved = move_trailing_impact_block(
                 body_markdown, impact_markdown
             )
@@ -1109,6 +1125,7 @@ def missing_section_topics(site: dict, sections: list[dict]) -> set[str]:
         section["topic"]
         for section in sections
         if len(section.get("news_items", [])) >= MIN_NEWS_ITEMS_PER_SECTION
+        and any(i.get("wallet_impact_anchor") for i in section.get("news_items", []))
     }
     return {topic["id"] for topic in site.get("topics", [])} - present
 
@@ -1480,6 +1497,7 @@ def review_with_gemini(
                         "title": source_by_ref[ref].get("title", ""),
                         "published_at": source_by_ref[ref].get("published_at"),
                         "summary": source_by_ref[ref].get("summary", ""),
+                        "article_evidence": source_by_ref[ref].get("evidence_text", ""),
                     }
                     for ref in item["source_refs"]
                     if ref in source_by_ref
@@ -1549,6 +1567,7 @@ def review_with_gemini(
         for item in section["news_items"]:
             review = review_by_article[(section["topic"], item["id"])]
             if review.get("ok") is True:
+                item["evidence_review_passed"] = True
                 accepted_items.append(item)
                 continue
             reasons = review.get("reasons") or review.get("reason") or []
@@ -1560,10 +1579,11 @@ def review_with_gemini(
                 "gemini_evidence_review_rejected",
                 article_id=item["id"],
                 title=item["title"][:120],
+                source_refs=item["source_refs"],
                 details=[str(reason) for reason in reasons],
             )
 
-        if len(accepted_items) < MIN_NEWS_ITEMS_PER_SECTION:
+        if len(accepted_items) < MIN_NEWS_ITEMS_PER_SECTION or not any(i.get("wallet_impact_anchor") for i in accepted_items):
             log_quality_rejection(
                 rejections,
                 section["topic"],
@@ -1863,92 +1883,54 @@ def main() -> int:
         return 1
 
     quality_rejections = []
+    sections = []
     if args.use_llm:
-        sections = call_deepseek_for_sections(candidates, site, publication_date, rejections=quality_rejections)
-        missing_topics = missing_section_topics(site, sections)
-        if missing_topics:
-            repair_sections = call_deepseek_for_sections(
-                candidates,
-                site,
-                publication_date,
-                rejections=quality_rejections,
-                target_topics=missing_topics,
-                feedback_by_topic=feedback_by_topic_from_rejections(quality_rejections, missing_topics),
+        # Keep accepted sections. Only repair missing sections; evidence refs stay stable.
+        for round_index in range(5):
+            missing = missing_section_topics(site, sections)
+            if not missing:
+                break
+            selected = set()
+            for topic in missing:
+                pool = [c for c in candidates_for_section(number_candidates(candidates, site), topic)
+                        if topic not in c.get("excluded_topics", [])]
+                selected.update(c["url"] for c in pool[:12])
+            enrich_candidates(candidates, selected, retry=round_index > 0)
+            before = len(quality_rejections)
+            updates = call_deepseek_for_sections(
+                candidates, site, publication_date, rejections=quality_rejections,
+                target_topics=missing,
+                feedback_by_topic=feedback_by_topic_from_rejections(quality_rejections, missing),
             )
-            sections = merge_sections(sections, repair_sections)
+            if args.review and updates:
+                try:
+                    updates = review_with_gemini(updates, candidates, site, quality_rejections)
+                except GeminiReviewUnavailable as exc:
+                    # Strict publication: unavailable review is not a passed review.
+                    log_gemini_review_unavailable(quality_rejections, updates, exc)
+                    write_run_artifacts(publication_date, candidates, sections, site, quality_rejections)
+                    return 1
+            sections = merge_sections(sections, updates)
+            source_by_ref = {c["ref"]: c for c in number_candidates(candidates, site)}
+            for rejection in quality_rejections[before:]:
+                if rejection["reason"] not in {"gemini_evidence_review_rejected", "article_length_out_of_range"}:
+                    continue
+                for ref in rejection.get("source_refs", []):
+                    source = source_by_ref.get(ref)
+                    if not source:
+                        continue
+                    original = next(c for c in candidates if c["url"] == source["url"])
+                    # First repair refreshes missing body; next repair replaces the material.
+                    if original.get("evidence_text") or original.get("evidence_attempts", 0) >= 2:
+                        original.setdefault("excluded_topics", []).append(rejection["topic"])
+            write_run_artifacts(publication_date, candidates, sections, site, quality_rejections)
+        missing = missing_section_topics(site, sections)
+        if missing:
+            print(json.dumps({"ok": False, "missing_sections": sorted(missing),
+                  "error": "Evidence recovery exhausted; scheduled recovery will retry without publishing unapproved content."}), file=sys.stderr)
+            return 1
     else:
         sections = section_stub(site, publication_date)
-
-    if args.use_llm and candidates and missing_section_topics(site, sections):
-        missing_topics = sorted(missing_section_topics(site, sections))
-        write_run_artifacts(publication_date, candidates, sections, site, quality_rejections)
-        print(
-            json.dumps(
-                {
-                    "ok": False,
-                    "date": publication_date,
-                    "candidates": len(candidates),
-                    "sections": len(sections),
-                    "news_items": total_news_count(sections),
-                    "missing_sections": missing_topics,
-                    "error": "Some sections could not be repaired to at least one quality-gated article.",
-                },
-                ensure_ascii=False,
-            ),
-            file=sys.stderr,
-        )
-        return 1
-
-    if args.review:
-        review_available = True
-        try:
-            reviewed_sections = review_with_gemini(sections, candidates, site, quality_rejections)
-        except GeminiReviewUnavailable as exc:
-            review_available = False
-            log_gemini_review_unavailable(quality_rejections, sections, exc)
-            reviewed_sections = sections
-        missing_topics = missing_section_topics(site, reviewed_sections)
-        repair_attempt = 0
-        while review_available and missing_topics and repair_attempt < POST_REVIEW_REPAIR_ATTEMPTS:
-            repair_attempt += 1
-            repair_sections = call_deepseek_for_sections(
-                candidates,
-                site,
-                publication_date,
-                rejections=quality_rejections,
-                target_topics=missing_topics,
-                feedback_by_topic=feedback_by_topic_from_rejections(quality_rejections, missing_topics),
-            )
-            if not repair_sections:
-                break
-            try:
-                reviewed_repair_sections = review_with_gemini(repair_sections, candidates, site, quality_rejections)
-            except GeminiReviewUnavailable as exc:
-                review_available = False
-                log_gemini_review_unavailable(quality_rejections, repair_sections, exc)
-                reviewed_repair_sections = repair_sections
-            reviewed_sections = merge_sections(reviewed_sections, reviewed_repair_sections)
-            missing_topics = missing_section_topics(site, reviewed_sections)
-        sections = reviewed_sections
-        if review_available and args.use_llm and candidates and missing_section_topics(site, sections):
-            missing_topics = sorted(missing_section_topics(site, sections))
-            write_run_artifacts(publication_date, candidates, sections, site, quality_rejections)
-            print(
-                json.dumps(
-                    {
-                        "ok": False,
-                        "date": publication_date,
-                        "candidates": len(candidates),
-                        "sections": len(sections),
-                        "news_items": total_news_count(sections),
-                        "missing_sections": missing_topics,
-                        "error": "Some sections still lacked one evidence-approved article after repair attempts.",
-                    },
-                    ensure_ascii=False,
-                ),
-                file=sys.stderr,
-            )
-            return 1
 
     annotate_cross_section_duplicates(sections, site)
 
